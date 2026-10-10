@@ -15,7 +15,7 @@ import { InviteService } from '../auth/auth.module';
 const hex = z.string().regex(/^#[0-9a-fA-F]{6}$/, 'Use a 6-digit hex colour');
 const brandingSchema = z.object({
   brandColour: hex.optional(), tagline: z.string().max(160).nullable().optional(), phone: z.string().max(30).nullable().optional(),
-  email: z.string().email().nullable().optional().or(z.literal('').transform(() => null)), website: z.string().max(200).nullable().optional(),
+  email: z.string().trim().email().nullable().optional().or(z.literal('').transform(() => null)), website: z.string().max(200).nullable().optional(),
   address: z.string().max(400).nullable().optional(), footer: z.string().max(600).nullable().optional(), terms: z.string().max(4000).nullable().optional(),
   inclusions: z.string().max(1500).nullable().optional(), exclusions: z.string().max(1500).nullable().optional(),
 });
@@ -38,7 +38,7 @@ export class AgencyController {
 
   @Post('users')
   async inviteUser(@CurrentUser() p: Principal, @Body() body: unknown) {
-    const b = parse(z.object({ name: z.string().min(2).max(120), email: z.string().email(), role: z.enum(['SALES', 'AGENCY_ADMIN']).default('SALES'), canOverrideRates: z.boolean().default(true) }), body);
+    const b = parse(z.object({ name: z.string().min(2).max(120), email: z.string().trim().email(), role: z.enum(['SALES', 'AGENCY_ADMIN']).default('SALES'), canOverrideRates: z.boolean().default(true) }), body);
     const agencyId = agencyOf(p);
     const r = await this.db.tenant(agencyId, async (tx) => {
       const email = b.email.toLowerCase();
@@ -66,6 +66,23 @@ export class AgencyController {
       await audit(tx, { agencyId, actorUserId: p.userId, action: b.role && b.role !== u.role ? 'user.role_changed' : 'user.updated', entityType: 'user', entityId: id, metadata: b });
       return { id: upd.id, status: upd.status, role: upd.role };
     });
+  }
+
+  /** Resend an invitation or issue a password-reset link. The user keeps access until they set a new password. */
+  @Post('users/:id/reinvite')
+  async reinvite(@CurrentUser() p: Principal, @Param('id', ParseUUIDPipe) id: string) {
+    const agencyId = agencyOf(p);
+    const r = await this.db.tenant(agencyId, async (tx) => {
+      const u = await tx.user.findFirst({ where: { id, agencyId } });
+      if (!u) throw new NotFoundException({ code: 'not_found', message: 'User not found' });
+      if (u.status === 'disabled') throw new BadRequestException({ code: 'user_disabled', message: 'Enable this user before sending an invitation' });
+      const agency = await tx.agency.findUniqueOrThrow({ where: { id: agencyId } });
+      const inv = await this.invites.create(tx, u, agency.name);
+      await audit(tx, { agencyId, actorUserId: p.userId, action: 'user.reinvited', entityType: 'user', entityId: id });
+      return inv;
+    });
+    await r.deliver();
+    return config().isProd ? { ok: true } : { ok: true, inviteUrl: r.link };
   }
 
   // ---- branding ----

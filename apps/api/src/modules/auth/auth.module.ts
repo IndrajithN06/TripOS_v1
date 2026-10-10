@@ -80,7 +80,7 @@ export class AuthService {
   }
 }
 
-const loginSchema = z.object({ email: z.string().email(), password: z.string().min(1), mfaCode: z.string().optional() });
+const loginSchema = z.object({ email: z.string().trim().email(), password: z.string().min(1), mfaCode: z.string().optional() });
 
 @Controller()
 export class AuthController {

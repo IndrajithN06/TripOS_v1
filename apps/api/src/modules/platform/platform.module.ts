@@ -9,7 +9,7 @@ import { InviteService } from '../auth/auth.module';
 const slug = z.string().min(2).max(40).regex(/^[a-z0-9]+(-[a-z0-9]+)*$/, 'Lowercase letters, digits and hyphens only');
 const createSchema = z.object({
   name: z.string().min(2).max(120), legalName: z.string().max(200).optional(), slug,
-  adminName: z.string().min(2).max(120), adminEmail: z.string().email(),
+  adminName: z.string().min(2).max(120), adminEmail: z.string().trim().email(),
   plan: z.string().max(40).default('standard'), aiMonthlyLimit: z.number().int().min(0).max(1_000_000).default(200),
   timezone: z.string().default('Asia/Kolkata'),
 });

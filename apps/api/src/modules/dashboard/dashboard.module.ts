@@ -33,7 +33,8 @@ export class DashboardService {
         tx.quote.findMany({ where: { agencyId, ...quoteScope, ...open }, select: { currentVersionId: true } }),
         tx.auditLog.findMany({ where: { agencyId, action: 'quote.status_changed', createdAt: { gte: from, lte: to }, metadata: { path: ['to'], equals: 'accepted' } }, select: { entityId: true } }),
         tx.quoteVersion.count({ where: { agencyId, status: { in: ['failed', 'partially_sent'] }, createdAt: { gte: from, lte: to } } }),
-        tx.message.count({ where: { agencyId, direction: 'outbound', status: 'failed', createdAt: { gte: from, lte: to } } }),
+        // Unresolved only: a failed message stops counting once a later outbound message in the same chat was accepted.
+        tx.$queryRaw<{ n: number }[]>`SELECT count(*)::int n FROM "Message" m WHERE m."agencyId" = ${agencyId}::uuid AND m.direction = 'outbound' AND m.status = 'failed' AND m."createdAt" >= ${from} AND m."createdAt" <= ${to} AND NOT EXISTS (SELECT 1 FROM "Message" r WHERE r."conversationId" = m."conversationId" AND r.direction = 'outbound' AND r.status <> 'failed' AND r."createdAt" > m."createdAt")`.then((r) => r[0].n),
         mine ? Promise.resolve([]) : tx.auditLog.findMany({ where: { agencyId }, orderBy: { createdAt: 'desc' }, take: 12 }),
       ]);
       const versions = await tx.quoteVersion.findMany({ where: { id: { in: openQuotes.map((q) => q.currentVersionId!).filter(Boolean) } }, select: { total: true } });

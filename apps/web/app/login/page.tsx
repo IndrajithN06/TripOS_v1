@@ -9,7 +9,7 @@ export default function Login() {
   async function submit(e: React.FormEvent) {
     e.preventDefault(); setBusy(true); setErr('');
     try {
-      const r = await api('/auth/login', { body: { email, password, mfaCode: mfaCode || undefined } });
+      const r = await api('/auth/login', { body: { email: email.trim(), password, mfaCode: mfaCode.trim() || undefined } });
       if (r.mfaRequired) { setNeedMfa(true); return; }
       location.href = r.role === 'SUPER_ADMIN' ? '/platform' : '/dashboard';
     } catch (x) { setErr(errMsg(x)); } finally { setBusy(false); }
@@ -17,7 +17,7 @@ export default function Login() {
   return (
     <main className="auth"><form className="card stack" onSubmit={submit}>
       <h1>Sign in to TripOS</h1>
-      {err && <div className="banner err" role="alert">{err}</div>}
+      {err && <div className="banner err" role="alert">{err}<div className="small">New team member? Open the invitation link you were sent and set your password first. Lost it? Ask your agency admin for “Resend invite” in Settings → Team.</div></div>}
       <label>Email<input type="email" autoComplete="username" required value={email} onChange={(e) => setEmail(e.target.value)} /></label>
       <label>Password<input type="password" autoComplete="current-password" required value={password} onChange={(e) => setPassword(e.target.value)} /></label>
       {needMfa && <label>Authenticator code<input inputMode="numeric" maxLength={6} autoFocus required value={mfaCode} onChange={(e) => setMfa(e.target.value)} /></label>}

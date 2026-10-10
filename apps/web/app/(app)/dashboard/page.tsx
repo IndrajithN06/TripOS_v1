@@ -3,7 +3,7 @@ import './dashboard.css';
 import Link from 'next/link';
 import { useMemo, useState } from 'react';
 import { useApi } from '@/lib/api';
-import { fmtDateTime, inr } from '@/lib/format';
+import { inr } from '@/lib/format';
 import { ChartCard, Delta, FunnelChart, HBars, Heatmap, Legend, SegmentBar, Sparkline, TrendChart, compact, wholeInr } from '@/components/charts';
 import { Empty, ErrorBox, Loading, useMe } from '@/components/ui';
 
@@ -52,7 +52,11 @@ export default function Dashboard() {
       </div>
 
       {(ops?.alerts.failedQuoteSends > 0 || ops?.alerts.failedMessages > 0) && (
-        <div className="banner err" role="alert">⚠ <strong>Needs attention:</strong> {ops.alerts.failedQuoteSends} quote send(s) failed or partly failed, {ops.alerts.failedMessages} message(s) failed. <Link href="/quotes?status=send_failed">Review quotes</Link></div>
+        <div className="banner err row" role="alert">
+          <span>⚠ <strong>Needs attention:</strong></span>
+          {ops.alerts.failedQuoteSends > 0 && <span>{ops.alerts.failedQuoteSends} quote send(s) failed or only partly delivered · <Link href="/quotes">Review quotes</Link></span>}
+          {ops.alerts.failedMessages > 0 && <span>{ops.alerts.failedMessages} message(s) not delivered and not yet followed up · <Link href="/inbox">Open inbox</Link></span>}
+        </div>
       )}
       {empty && <div className="card"><Empty>No activity in this period yet. Receive an enquiry in the Inbox (use the simulator) or run <code>npm run db:seed:history -w @tripos/api</code> for demo data.</Empty></div>}
 
@@ -114,13 +118,6 @@ export default function Dashboard() {
         </ChartCard>
       </div>
 
-      {d.scope === 'full' && ops && (
-        <section className="card"><h2>Recent activity</h2>
-          {ops.activity.length === 0 ? <Empty>No activity yet.</Empty> : (
-            <table className="v-activity"><tbody>{ops.activity.map((x: any) => <tr key={x.id}><td>{x.action.replace(/[._]/g, ' ')}</td><td className="muted small">{x.entityType}</td><td className="right muted small">{fmtDateTime(x.createdAt, me.agency?.timezone)}</td></tr>)}</tbody></table>
-          )}
-        </section>
-      )}
       <div className="row"><Link className="btn primary" href="/inbox">Open inbox</Link><Link className="btn" href="/quotes">All quotes</Link><span className="muted small">Counts of quotes use parent quotes; pipeline uses the current version of open quotes only.</span></div>
     </div>
   );

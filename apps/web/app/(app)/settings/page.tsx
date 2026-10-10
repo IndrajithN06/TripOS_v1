@@ -78,7 +78,7 @@ function Team() {
           <tbody>{data?.map((u) => (
             <tr key={u.id}><td>{u.name}</td><td>{u.email}</td><td>{u.role.replace('_', ' ').toLowerCase()}</td><td><StatusBadge s={u.status} /></td>
               <td>{u.role === 'SALES' ? <input type="checkbox" aria-label={`${u.name} can change rates`} style={{ width: 'auto' }} checked={u.canOverrideRates} onChange={(e) => run(() => api(`/agency/users/${u.id}`, { method: 'PATCH', body: { canOverrideRates: e.target.checked } })).then(reload)} /> : 'always'}</td>
-              <td>{u.id !== me.user.id && (u.status === 'disabled'
+              <td>{u.status !== 'disabled' && <button className="btn sm" title="Send a new set-password link" onClick={() => run(async () => { const r = await api(`/agency/users/${u.id}/reinvite`, { body: {} }); setInvite(r.inviteUrl ?? ''); }, u.status === 'invited' ? 'Invitation re-sent' : 'Password reset link sent')}>{u.status === 'invited' ? 'Resend invite' : 'Reset password'}</button>} {u.id !== me.user.id && (u.status === 'disabled'
                 ? <button className="btn sm" onClick={() => run(() => api(`/agency/users/${u.id}`, { method: 'PATCH', body: { status: 'active' } })).then(reload)}>Enable</button>
                 : <button className="btn sm danger" onClick={() => run(() => api(`/agency/users/${u.id}`, { method: 'PATCH', body: { status: 'disabled' } }), 'User disabled').then(reload)}>Disable</button>)}</td></tr>))}</tbody></table>
       </div>
