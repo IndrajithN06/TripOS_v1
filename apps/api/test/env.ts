@@ -1,0 +1,11 @@
+process.env.NODE_ENV = 'test';
+process.env.DATABASE_URL = 'postgresql://tripos_app:tripos_app_dev_only@localhost:5442/tripos_test';
+process.env.DATABASE_MIGRATE_URL = 'postgresql://tripos:tripos_dev_only@localhost:5442/tripos_test';
+process.env.SESSION_SECRET = 'test-session-secret-0123456789abcdef0123';
+process.env.APP_ENCRYPTION_KEY = 'test-encryption-key-0123456789abcdef';
+process.env.STORAGE_PROVIDER = 'local';
+process.env.STORAGE_LOCAL_DIR = './storage-test';
+process.env.WHATSAPP_PROVIDER = 'simulator';
+process.env.AI_PROVIDER = 'mock';
+process.env.EMAIL_PROVIDER = 'console';
+process.env.JOBS_WORKER = 'false';

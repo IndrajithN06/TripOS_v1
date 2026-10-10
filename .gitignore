@@ -1,0 +1,10 @@
+node_modules
+dist
+.next
+.env
+.env.*
+!.env.example
+!.env.production.example
+apps/api/storage
+*.log
+coverage

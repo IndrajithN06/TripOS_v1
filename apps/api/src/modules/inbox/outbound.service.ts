@@ -1,0 +1,105 @@
+import { BadRequestException, Inject, Injectable, NotFoundException } from '@nestjs/common';
+import { decryptSecret } from '../../common/crypto';
+import { Db } from '../../db/db.service';
+import { STORAGE, StorageProvider } from '../../providers/storage/storage';
+import { WaAccount, WaSendError, WHATSAPP, WhatsAppProvider } from '../../providers/whatsapp/whatsapp';
+
+export const SERVICE_WINDOW_MS = 24 * 3600 * 1000;
+
+export type OutboundPayload =
+  | { kind: 'text'; text: string }
+  | { kind: 'document'; assetId: string; filename: string; caption?: string }
+  | { kind: 'image'; assetId: string; caption?: string }
+  | { kind: 'template'; templateId: string; variables: string[] };
+
+interface Prepared {
+  msg: { id: string };
+  customer: { phoneE164: string };
+  account: { phoneNumberId: string; credentialSecretRef: string | null };
+  asset: { storageKey: string; mimeType: string } | null;
+  template: { name: string; language: string } | null;
+}
+
+export interface OutboundResult { ok: boolean; messageId: string; status: string; errorCode?: string; errorMessage?: string; deduplicated?: boolean }
+
+@Injectable()
+export class OutboundService {
+  constructor(private readonly db: Db, @Inject(WHATSAPP) private readonly wa: WhatsAppProvider, @Inject(STORAGE) private readonly storage: StorageProvider) {}
+
+  /**
+   * Sends one customer-facing message through the connected agency account.
+   * Idempotent per `idempotencyKey`: a message that was already accepted is never sent twice.
+   * Three short transactions (record → provider call → record result) so no DB tx spans the HTTP call.
+   */
+  async send(agencyId: string, conversationId: string, payload: OutboundPayload, opts: { userId: string | null; idempotencyKey?: string }): Promise<OutboundResult> {
+    const ctx = await this.db.tenant(agencyId, async (tx) => {
+      const conv = await tx.conversation.findFirst({ where: { id: conversationId, agencyId } });
+      if (!conv) throw new NotFoundException({ code: 'not_found', message: 'Conversation not found' });
+      const customer = await tx.customer.findFirstOrThrow({ where: { id: conv.customerId, agencyId } });
+      const account = await tx.whatsappAccount.findFirst({ where: { agencyId } });
+      if (!account) throw new BadRequestException({ code: 'whatsapp_not_connected', message: 'Connect a WhatsApp account in Settings first' });
+
+      if (opts.idempotencyKey) {
+        const prior = await tx.message.findFirst({ where: { agencyId, idempotencyKey: opts.idempotencyKey } });
+        if (prior && prior.status !== 'failed') return { dedup: prior };
+        // A retry of a failed send re-uses the key; the failed row keeps its history under a retired key.
+        if (prior) await tx.message.update({ where: { id: prior.id }, data: { idempotencyKey: `${opts.idempotencyKey}#retired-${prior.id}` } });
+      }
+
+      let template: { name: string; language: string; body: string } | null = null;
+      if (payload.kind === 'template') {
+        const t = await tx.whatsappTemplate.findFirst({ where: { id: payload.templateId, agencyId } });
+        if (!t) throw new NotFoundException({ code: 'not_found', message: 'Template not found' });
+        if (t.providerStatus !== 'approved') throw new BadRequestException({ code: 'template_not_approved', message: `Template "${t.name}" is ${t.providerStatus}; only provider-approved templates can be sent` });
+        const expected = (t.variableSchema as string[]).length;
+        if (payload.variables.length !== expected || payload.variables.some((v) => !v.trim())) throw new BadRequestException({ code: 'template_variables', message: `Template needs ${expected} non-empty variable(s)` });
+        template = t;
+      } else {
+        // Free-form messages are only allowed inside the 24h customer-service window.
+        const open = !!conv.lastInboundAt && Date.now() - conv.lastInboundAt.getTime() < SERVICE_WINDOW_MS;
+        if (!open) throw new BadRequestException({ code: 'window_closed', message: 'The 24-hour customer service window is closed. Send an approved template to re-open the conversation.' });
+      }
+
+      const text = payload.kind === 'text' ? payload.text : payload.kind === 'template' ? renderTemplate(template!.body, payload.variables) : payload.caption ?? null;
+      const msg = await tx.message.create({
+        data: {
+          agencyId, conversationId, direction: 'outbound', type: payload.kind, text, status: 'queued', simulated: this.wa.simulated, sentByUserId: opts.userId,
+          idempotencyKey: opts.idempotencyKey, mediaAssetId: payload.kind === 'document' || payload.kind === 'image' ? payload.assetId : null,
+          templateId: payload.kind === 'template' ? payload.templateId : null,
+        },
+      });
+      const asset = payload.kind === 'document' || payload.kind === 'image' ? await tx.asset.findFirst({ where: { id: payload.assetId, agencyId } }) : null;
+      if ((payload.kind === 'document' || payload.kind === 'image') && !asset) throw new NotFoundException({ code: 'not_found', message: 'Attachment not found' });
+      return { dedup: null, msg, customer, account, asset, template };
+    });
+
+    if (ctx.dedup) return { ok: true, messageId: ctx.dedup.id, status: ctx.dedup.status, deduplicated: true };
+    const { msg, customer, account, asset, template } = ctx as unknown as Prepared;
+
+    const acct: WaAccount = { phoneNumberId: account.phoneNumberId, token: account.credentialSecretRef ? decryptSecret(account.credentialSecretRef) : undefined };
+    try {
+      let r;
+      if (payload.kind === 'text') r = await this.wa.sendText(acct, customer.phoneE164, payload.text);
+      else if (payload.kind === 'template') r = await this.wa.sendTemplate(acct, customer.phoneE164, { name: template!.name, language: template!.language, variables: payload.variables });
+      else {
+        const data = await this.storage.get(asset!.storageKey);
+        r = payload.kind === 'document'
+          ? await this.wa.sendDocument(acct, customer.phoneE164, { filename: payload.filename, data, mimeType: asset!.mimeType, caption: payload.caption })
+          : await this.wa.sendImage(acct, customer.phoneE164, { data, mimeType: asset!.mimeType, caption: payload.caption });
+      }
+      await this.db.tenant(agencyId, async (tx) => {
+        await tx.message.update({ where: { id: msg.id }, data: { status: 'submitted', providerMessageId: r.providerMessageId } });
+        await tx.conversation.update({ where: { id: conversationId }, data: { lastMessageAt: new Date() } });
+      });
+      return { ok: true, messageId: msg.id, status: 'submitted' };
+    } catch (e) {
+      const err = e instanceof WaSendError ? e : new WaSendError((e as Error).message, 'unexpected');
+      await this.db.tenant(agencyId, (tx) => tx.message.update({ where: { id: msg.id }, data: { status: 'failed', errorCode: err.code, errorMessage: err.message } }));
+      return { ok: false, messageId: msg.id, status: 'failed', errorCode: err.code, errorMessage: err.message };
+    }
+  }
+}
+
+export function renderTemplate(body: string, vars: string[]) {
+  return body.replace(/\{\{(\d+)\}\}/g, (_, n) => vars[Number(n) - 1] ?? '');
+}
