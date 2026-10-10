@@ -94,6 +94,41 @@ Assumptions: average revenue per agency ₹3,500/month (a mix of tiers), variabl
 
 So operating break-even is roughly **30-40 paying agencies** at these assumptions, and the one-time investment is recovered after that. If maintenance is handled by the founders rather than paid, break-even comes much sooner. If prices are higher or the mix skews to Growth/Pro, it moves earlier; if acquisition is slow or support-heavy, later. Customer acquisition cost is **not** included.
 
+## 5b. Two-founder bootstrap scenario (first 5 agencies)
+Assumptions: two founders split everything 50/50; they do development, sales, onboarding and support themselves and draw no salary; invoicing is manual at first; WhatsApp fees are paid by each agency directly to Meta (no cash float). **Founder time is not counted as a cost**, so "profit" below is what is left to pay the founders.
+
+### Cash needed (about 6 months of runway)
+| Line | Lean | Comfortable |
+|---|---|---|
+| Legal (terms, privacy policy, founders' agreement) | ₹30,000 | ₹75,000 |
+| Business setup (partnership/LLP/company) and accountant | ₹30,000 | ₹50,000 |
+| Infrastructure, 6 months | ₹36,000 | ₹72,000 |
+| Domain, email, monitoring, tools | ₹6,000 | ₹15,000 |
+| Marketing and outreach (demo video, landing page, travel, small ads) | ₹25,000 | ₹60,000 |
+| Independent security test | skip for pilots | ₹75,000 |
+| Contract developer for billing or Embedded Signup | none (founders do it) | ₹75,000 |
+| Contingency (15%) | ₹20,000 | ₹65,000 |
+| **Total** | **≈ ₹1.5L (₹1.2-1.8L)** | **≈ ₹4.8L (₹3-5L)** |
+Each founder contributes half: roughly **₹75,000 each (lean)** or **₹2.4L each (comfortable)**.
+
+### Monthly result with 5 paying agencies (after any free pilot months)
+| | Pessimistic | Base | Optimistic |
+|---|---|---|---|
+| Paying agencies x average price | 3 x ₹2,500 | 5 x ₹3,500 | 5 x ₹5,000 |
+| Monthly revenue | ₹7,500 | ₹17,500 | ₹25,000 |
+| Infrastructure, accountant, tools, gateway, per-agency costs | ₹11,000 | ₹14,500 | ₹14,500 |
+| **Monthly profit** | **about -₹3,500** | **about ₹3,000** | **about ₹10,500** |
+| **Each founder (50%)** | -₹1,750 | ₹1,500 | ₹5,250 |
+Setup fees (₹5,000-10,000 per agency) add a one-time ₹25,000-50,000 across five agencies.
+
+### What this means
+- With 5 agencies the business roughly **breaks even on cash**; its value is proving the product and pricing. At the base case the lean investment takes years to recover unless it grows.
+- Illustrative growth at the same assumptions: **20 agencies** is about ₹44,000 profit a month (₹22,000 each); **35 agencies** about ₹85,000 (₹42,000 each). Support load grows too, and at that size a paid support hire (₹25,000-40,000 a month) is likely, which lowers these figures.
+- Profit is before income tax; GST collected is not income. Set aside tax and keep roughly 20-30% of profit for reinvestment before sharing.
+
+### Agree in writing before spending (take legal advice)
+Equal capital contributions and who reimburses what; roles; vesting and what happens if one founder leaves; **assignment of the code and brand to the business**; ownership of the domain, the Meta business account, the WhatsApp numbers and the hosting accounts in the **company's** name; a business bank account; how decisions are made if you disagree; and how profit is distributed versus reinvested.
+
 ## 6. Risks to the numbers
 - Meta pricing changes often (the 1 October 2026 change is recent). Re-check before each price review.
 - Real-world Cloud API integration may take longer than estimated (it is unverified live).
