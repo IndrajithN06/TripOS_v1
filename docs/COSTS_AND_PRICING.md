@@ -126,6 +126,19 @@ Setup fees (₹5,000-10,000 per agency) add a one-time ₹25,000-50,000 across f
 - Illustrative growth at the same assumptions: **20 agencies** is about ₹44,000 profit a month (₹22,000 each); **35 agencies** about ₹85,000 (₹42,000 each). Support load grows too, and at that size a paid support hire (₹25,000-40,000 a month) is likely, which lowers these figures.
 - Profit is before income tax; GST collected is not income. Set aside tax and keep roughly 20-30% of profit for reinvestment before sharing.
 
+### Price-point comparison (5 paying agencies, monthly, excl. GST)
+Costs: about ₹14,000 fixed (infrastructure, accountant, tools, per-agency costs) plus 2% payment-gateway fees.
+| Price per agency per month | Monthly revenue | Monthly profit | Each founder |
+|---|---|---|---|
+| ₹3,500 | ₹17,500 | ~₹3,150 | ~₹1,600 |
+| ₹5,000 | ₹25,000 | ~₹10,000 | ~₹5,000 |
+| ₹10,000 | ₹50,000 | ~₹35,000 | ~₹17,500 |
+| ₹15,000 | ₹75,000 | ~₹59,500 | ~₹29,750 |
+| ₹20,000 | ₹1,00,000 | ~₹84,000 | ~₹42,000 |
+Fewer customers at the higher price: 2 agencies at ₹15,000 is about ₹19,000 profit a month (₹9,500 each); 3 agencies about ₹33,000 (₹16,500 each). The fixed costs are covered by about 4 agencies at ₹3,500 but by 1 agency at ₹15,000.
+
+**The catch:** a high price only works if enough agencies say yes. ₹15,000-20,000 a month is well above typical small-business tools and close to a junior sales employee's salary, so it needs a clear return (for example, a few extra confirmed bookings a month) and a target customer with enough volume (roughly 3+ sales staff and 200+ enquiries a month). V1 covers enquiry-to-quote only, with no bookings, operations or billing, and the real WhatsApp integration is not yet proven live. A hybrid is lower risk: a one-time setup/onboarding fee of ₹15,000-20,000 plus a monthly plan of ₹4,999-9,999. Run 5-8 price conversations with real agencies, and one or two paid pilots, before fixing the price.
+
 ### Agree in writing before spending (take legal advice)
 Equal capital contributions and who reimburses what; roles; vesting and what happens if one founder leaves; **assignment of the code and brand to the business**; ownership of the domain, the Meta business account, the WhatsApp numbers and the hosting accounts in the **company's** name; a business bank account; how decisions are made if you disagree; and how profit is distributed versus reinvested.
 
