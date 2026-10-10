@@ -9,6 +9,7 @@ import { DbModule } from './db/db.service';
 import { AiService } from './modules/ai/ai.service';
 import { AgencyController } from './modules/agency/agency.module';
 import { AuthModule } from './modules/auth/auth.module';
+import { AnalyticsController, AnalyticsService } from './modules/dashboard/analytics.module';
 import { DashboardController, DashboardService } from './modules/dashboard/dashboard.module';
 import { DevController, MediaController } from './modules/dev/dev.module';
 import { HealthController } from './modules/health/health.controller';
@@ -46,10 +47,10 @@ class CoreModule {}
   ],
   controllers: [
     AgencyController, PlatformController, VehiclesController, QuotesController, InboxController, WebhooksController,
-    DashboardController, HealthController, MediaController, DevController,
+    DashboardController, AnalyticsController, HealthController, MediaController, DevController,
   ],
   providers: [
-    PlatformService, QuotesService, OutboundService, InboxService, InboundService, AiService, DashboardService, WorkerBootstrap,
+    PlatformService, QuotesService, OutboundService, InboxService, InboundService, AiService, DashboardService, AnalyticsService, WorkerBootstrap,
     { provide: APP_GUARD, useClass: ThrottlerGuard },
     { provide: APP_GUARD, useClass: CsrfGuard },
     { provide: APP_GUARD, useClass: AuthGuard },

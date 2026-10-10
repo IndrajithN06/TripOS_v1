@@ -5,5 +5,5 @@
     "experimentalDecorators": true, "emitDecoratorMetadata": true, "strictPropertyInitialization": false,
     "resolveJsonModule": true, "types": ["node", "jest", "multer"]
   },
-  "include": ["src", "test", "prisma/seed.ts"]
+  "include": ["src", "test", "prisma/seed.ts", "prisma/seed-history.ts"]
 }

@@ -42,6 +42,7 @@ In the Inbox, the right panel shows a **WhatsApp simulator** (clearly labelled S
 | `npm test` | pricing + API unit tests |
 | `npm run test:e2e` | API integration tests (uses separate DB `tripos_test`, created automatically) |
 | `npm run build` | production build of all packages |
+| `npm run db:seed:history -w @tripos/api` | adds ~45 days of synthetic backdated activity so the analytics dashboard has data (dev only, idempotent) |
 | `npm run db:reset` | **Destroys dev data**: drops, re-migrates, re-seeds the dev database |
 | `docker compose down -v` | remove PostgreSQL and its data volume |
 

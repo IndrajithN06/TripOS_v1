@@ -13,6 +13,7 @@
     "db:migrate": "prisma migrate deploy",
     "db:migrate:dev": "prisma migrate dev",
     "db:seed": "ts-node --transpile-only prisma/seed.ts",
+    "db:seed:history": "ts-node --transpile-only prisma/seed-history.ts",
     "db:reset": "prisma migrate reset --force --skip-seed && ts-node --transpile-only prisma/seed.ts"
   },
   "dependencies": {

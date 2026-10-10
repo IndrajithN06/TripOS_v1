@@ -6,7 +6,7 @@
 | Typecheck (all packages) | `npm run typecheck` | no errors |
 | Pricing unit tests | `npm test` | 14 / 14 passed |
 | API unit tests (config safety, crypto, upload sniffing, webhook signature/parse, templates) | `npm test` | 21 / 21 passed |
-| API integration/e2e (isolation, permissions, vehicles, enquiry, quotes, versioning, delivery/retry, templates, window, AI, dashboard, ops) | `npm run test:e2e` | 48 / 48 passed |
+| API integration/e2e (isolation, permissions, vehicles, enquiry, quotes, versioning, delivery/retry, templates, window, AI, dashboard, analytics, ops) | `npm run test:e2e` | 52 / 52 passed |
 | Production build (pricing, API, Next.js) | `npm run build` | succeeded |
 | `db:reset` + seed | `npm run db:reset` | succeeded |
 | Live smoke (API + web via proxy: login, 6 pages, dashboard, quotes) | manual curl | all OK |
