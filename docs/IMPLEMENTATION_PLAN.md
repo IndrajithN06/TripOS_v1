@@ -15,5 +15,12 @@
 | 10 Hardening | Isolation/permission/failure tests, production build | Done for API; no browser E2E |
 | 11 Approval checkpoint | Report and wait | **Reached; awaiting your approval** |
 
+## Added after the first checkpoint
+- **Analytics dashboard** (KPIs with period comparison, trend, funnel, status split, top vehicles, heatmap, table views, light/dark) and a synthetic history seeder. The Recent activity panel was removed at the owner's request.
+- **Accurate failure alert** on the dashboard (only unresolved failures, links to the right screen).
+- **Invite hardening:** emails trimmed, per-user *Resend invite / Reset password*, login guidance.
+- **Branding refresh:** saving branding or a logo updates the whole app immediately.
+
 ## Remaining work (not done)
+See `ROADMAP.md` for the full, prioritised list. In short:
 Browser E2E (Playwright), accessibility audit, SSE/WebSocket, Meta template submission/sync API calls, MFA enrolment screen, password-reset (admin re-invite exists), PDF footer on every page, UI for per-day minimum km, dependency vulnerability remediation, live provider verification, Docker image build verification, load/pagination performance testing.

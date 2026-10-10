@@ -41,5 +41,33 @@ Postgres-backed queue (`Job`, `SKIP LOCKED`, backoff, max attempts) behind `Jobs
 ## Realtime
 Short polling (4 s) in the inbox. SSE/WebSocket is not implemented (DECISIONS D-5).
 
+## Web application (`apps/web`)
+Next.js App Router, client components, no UI framework. `app/(app)/layout.tsx` is the authenticated shell: it loads `/me`, builds role-aware navigation, applies the agency brand colour, and exposes `useMe()` and `useRefreshMe()`. Saving branding refreshes the profile immediately, and it re-fetches every 4 minutes because signed logo URLs expire.
+- `lib/api.ts`: `api()` fetch wrapper (adds the CSRF header, redirects to login on 401) and `useApi()` data hook (keeps previous data while reloading).
+- `lib/format.ts`: INR formatting, agency-timezone display, and `zonedToIso`/`isoToZoned` for datetime inputs.
+- `components/QuoteBuilder.tsx` (live provisional price via `/quotes/calculate`, photo picker, preview, send, retry), `QuotePreview.tsx`, `charts.tsx`, `ui.tsx`.
+- Pages: dashboard, inbox (3 panes plus simulator panel), quotes (+ detail), vehicles (+ editor and photo manager), settings (6 tabs), platform.
+- Next.js rewrites `/api/*` to `API_INTERNAL_URL`, so the browser only talks to one origin.
+
+## Analytics dashboard
+`GET /dashboard/analytics` (`modules/dashboard/analytics.module.ts`) runs raw SQL inside the tenant transaction. Days are bucketed in the agency timezone (columns are UTC timestamps, converted with `AT TIME ZONE`). It returns KPIs with the previous period of equal length for deltas, a continuous daily series (zero-filled, capped at 120 days), a funnel, status split, top vehicles, an hour x weekday heatmap, median first-response time and delivery success. Sales users are scoped to their own quotes and get no pipeline value. Charts are dependency-free SVG (`components/charts.tsx`) with a palette validated for colour-blind separation and contrast in light and dark, hover and keyboard tooltips, and a table view for every chart. `npm run db:seed:history -w @tripos/api` generates synthetic backdated data for demos.
+
+## Repository layout
+```
+apps/api/src
+  app.module.ts, main.ts            wiring, bootstrap (raw body kept for webhook signatures)
+  config/                           zod env schema + production safety checks
+  common/                           auth guards, crypto, audit, errors, assets, placeholder PNG
+  db/                               Db service: tenant() and system() transactions
+  providers/                        storage, whatsapp, ai, email (interface + adapters)
+  modules/                          auth, platform, agency, vehicles, quotes, inbox, webhooks,
+                                    ai, dashboard (+ analytics), jobs, dev, health
+apps/api/prisma                     schema, migrations (RLS, triggers), seed, seed-history
+apps/api/test                       e2e suites (isolation, workflow, analytics, invites)
+packages/pricing                    pure pricing library + tests
+apps/web                            Next.js app
+docs/                               this documentation
+```
+
 ## Testing
-Unit (pricing, config safety, crypto, webhook parsing/signature) and API e2e against a dedicated `tripos_test` database (isolation, permissions, vehicles, enquiry, quotes, versioning, delivery/retry, templates, AI, dashboard).
+Unit (pricing, config safety, crypto, webhook parsing/signature) and API e2e against a dedicated `tripos_test` database (isolation, permissions, vehicles, enquiry, quotes, versioning, delivery/retry, templates, AI, dashboard, analytics, invites and password reset). See `TESTING_AND_ACCEPTANCE.md` for counts and gaps.

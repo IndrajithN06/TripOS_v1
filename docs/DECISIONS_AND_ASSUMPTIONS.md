@@ -11,6 +11,12 @@
 - **D-8 Money formatting.** Money is serialised with 2 decimals everywhere in the quote API.
 - **D-9 PDF currency.** The PDF prints `INR 1,234.00` because the built-in PDF font has no rupee glyph.
 
+- **D-10 Failure alert definition.** A failed outbound message counts on the dashboard only until a later outbound message in the same conversation is accepted.
+- **D-11 Invites and resets.** One mechanism: single-use, 72 h set-password links (stored hashed). "Reset password" issues a new link without locking the user out until it is used; using any link revokes existing sessions.
+- **D-12 Profile freshness.** The app shell re-fetches the profile after branding changes and every 4 minutes (signed logo URLs live about 5 minutes).
+- **D-13 Dashboard scope.** Sales users see only their own quotes and no pipeline value; failure alerts are agency-wide.
+- **D-14 Analytics charts.** Hand-written SVG instead of a charting library (no dependency, full control of accessibility and theme). Categorical palette limited to three series, validated against the card surface.
+
 ## Business assumptions (confirm before production)
 | # | Assumption | Default implemented |
 |---|---|---|
