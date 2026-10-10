@@ -3,7 +3,7 @@ import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useEffect } from 'react';
 import { api, useApi } from '@/lib/api';
-import { Loading, Me, MeContext, ErrorBox } from '@/components/ui';
+import { Loading, Me, MeContext, RefreshMeContext, ErrorBox } from '@/components/ui';
 
 const NAV = [
   { href: '/dashboard', label: 'Dashboard', icon: '▦', roles: ['AGENCY_ADMIN', 'SALES'] },
@@ -15,8 +15,10 @@ const NAV = [
 ];
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
-  const { data: me, error } = useApi<Me>('/me');
+  const { data: me, error, reload } = useApi<Me>('/me');
   const path = usePathname(), router = useRouter();
+  // Signed logo URLs expire after ~5 minutes, so re-fetch the profile periodically as well as after branding edits.
+  useEffect(() => { const t = setInterval(() => void reload(), 4 * 60 * 1000); return () => clearInterval(t); }, [reload]);
   useEffect(() => {
     if (!me) return;
     const item = NAV.find((n) => path.startsWith(n.href));
@@ -28,6 +30,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   const brand = me.agency?.brandColour ?? '#157f58';
   return (
     <MeContext.Provider value={me}>
+      <RefreshMeContext.Provider value={reload}>
       <div className="shell" style={{ ['--brand' as string]: brand }}>
         <nav className="nav" aria-label="Main">
           <div className="brand">
@@ -44,6 +47,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
         </nav>
         <main className="main">{children}</main>
       </div>
+      </RefreshMeContext.Provider>
     </MeContext.Provider>
   );
 }

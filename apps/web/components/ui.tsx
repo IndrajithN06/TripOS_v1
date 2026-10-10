@@ -11,6 +11,9 @@ export interface Me {
 }
 export const MeContext = createContext<Me | null>(null);
 export const useMe = () => useContext(MeContext)!;
+/** Re-fetches the signed-in profile so the shell (logo, name, brand colour) reflects changes immediately. */
+export const RefreshMeContext = createContext<() => Promise<void> | void>(() => undefined);
+export const useRefreshMe = () => useContext(RefreshMeContext);
 export const can = (me: Me, perm: string) => me.permissions.includes(perm);
 
 type Toast = { id: number; msg: string; err?: boolean };

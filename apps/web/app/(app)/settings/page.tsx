@@ -2,7 +2,7 @@
 import { useState } from 'react';
 import { api, useApi } from '@/lib/api';
 import { fmtDateTime, inr } from '@/lib/format';
-import { Empty, ErrorBox, Field, Loading, SimTag, StatusBadge, useAction, useMe } from '@/components/ui';
+import { Empty, ErrorBox, Field, Loading, SimTag, StatusBadge, useAction, useMe, useRefreshMe } from '@/components/ui';
 
 const TABS = [['branding', 'Profile & branding'], ['team', 'Team'], ['whatsapp', 'WhatsApp'], ['templates', 'Templates'], ['quotes', 'Quotes, tax & AI'], ['audit', 'Audit log']];
 
@@ -24,18 +24,21 @@ export default function Settings() {
 
 function Branding() {
   const run = useAction();
+  const refreshMe = useRefreshMe();
   const { data, error, reload } = useApi<any>('/agency/branding');
   const [f, setF] = useState<any>(null);
   const v = f ?? data;
   if (error) return <ErrorBox e={error} retry={reload} />;
   if (!v) return <Loading />;
   const set = (k: string, val: string) => setF({ ...v, [k]: val });
-  const save = () => run(() => api('/agency/branding', { method: 'PATCH', body: { brandColour: v.brandColour, tagline: v.tagline ?? null, phone: v.phone ?? null, email: v.email || null, website: v.website ?? null, address: v.address ?? null, footer: v.footer ?? null, terms: v.terms ?? null, inclusions: v.inclusions ?? null, exclusions: v.exclusions ?? null } }), 'Branding saved').then(reload);
+  // After any branding change: refetch this form AND the app shell, so logo/colour update instantly without a page refresh.
+  const refreshAll = async () => { await Promise.all([reload(), refreshMe()]); setF(null); };
+  const save = () => run(() => api('/agency/branding', { method: 'PATCH', body: { brandColour: v.brandColour, tagline: v.tagline ?? null, phone: v.phone ?? null, email: v.email || null, website: v.website ?? null, address: v.address ?? null, footer: v.footer ?? null, terms: v.terms ?? null, inclusions: v.inclusions ?? null, exclusions: v.exclusions ?? null } }), 'Branding saved').then((r) => (r === undefined ? undefined : refreshAll()));
   return (
     <div className="card stack" style={{ maxWidth: 820 }}>
       <div className="row">
         {data.logoUrl ? <img src={data.logoUrl} alt="Agency logo" style={{ height: 56, borderRadius: 8, border: '1px solid var(--line)' }} /> : <div className="muted">No logo</div>}
-        <label className="btn">Upload logo (JPEG/PNG)<input hidden type="file" accept="image/jpeg,image/png" onChange={(e) => { const file = e.target.files?.[0]; if (!file) return; const form = new FormData(); form.append('file', file); void run(() => api('/agency/branding/logo', { form }), 'Logo updated').then(reload); }} /></label>
+        <label className="btn">Upload logo (JPEG/PNG)<input hidden type="file" accept="image/jpeg,image/png" onChange={(e) => { const file = e.target.files?.[0]; if (!file) return; const form = new FormData(); form.append('file', file); void run(() => api('/agency/branding/logo', { form }), 'Logo updated').then((r) => (r === undefined ? undefined : refreshAll())); e.target.value = ''; }} /></label>
       </div>
       <div className="fields">
         <Field label="Brand colour"><input type="color" value={v.brandColour} onChange={(e) => set('brandColour', e.target.value)} /></Field>
