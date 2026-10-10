@@ -1,0 +1,27 @@
+# CI only: lint, typecheck, test, build, audit. There is deliberately NO deploy job.
+# Production deployment is a manual, separately-approved step (docs/PRODUCTION_DEPLOYMENT.md).
+name: ci
+on: [push, pull_request]
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env: { POSTGRES_USER: tripos, POSTGRES_PASSWORD: tripos_dev_only, POSTGRES_DB: tripos }
+        ports: ['5442:5432']
+        options: >-
+          --health-cmd "pg_isready -U tripos" --health-interval 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - run: npm ci
+      - name: Create the non-superuser app role
+        run: PGPASSWORD=tripos_dev_only psql -h localhost -p 5442 -U tripos -d tripos -f docker/init.sql
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run test:e2e
+      - run: npm run build
+      - run: npm audit --omit=dev --audit-level=high
+        continue-on-error: true

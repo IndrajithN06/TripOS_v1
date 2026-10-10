@@ -94,7 +94,7 @@ export class InboxService {
         const link = links.find((l) => l.messageId === m.id);
         const ver = versions.find((v) => v.id === link?.quoteVersionId);
         return {
-          id: m.id, direction: m.direction, type: m.type, text: m.text, status: m.status, errorCode: m.errorCode, errorMessage: m.errorMessage, simulated: m.simulated, createdAt: m.createdAt,
+          id: m.id, providerMessageId: m.simulated ? m.providerMessageId : undefined, direction: m.direction, type: m.type, text: m.text, status: m.status, errorCode: m.errorCode, errorMessage: m.errorMessage, simulated: m.simulated, createdAt: m.createdAt,
           media: a ? { assetId: a.id, mimeType: a.mimeType, url: await this.assets.url(a) } : null,
           quote: ver ? { quoteId: ver.quoteId, quoteNumber: quotes.find((q2) => q2.id === ver.quoteId)?.quoteNumber, version: ver.versionNumber } : null,
         };
