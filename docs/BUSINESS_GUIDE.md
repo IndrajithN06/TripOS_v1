@@ -92,6 +92,7 @@ billable km = max(750, 3 x 300) = 900 → 900 x 20 = 18,000 + batta 3 x 800 = 2,
 - **24-hour window:** free-form messages are allowed only within 24 hours of the customer's last message. Outside it, only an **approved template** can be sent. The chat shows whether the window is open.
 - **Templates** have a status reported by the provider: local draft → submitted → pending → approved / rejected / paused. TripOS never treats a template as approved until the provider says so, and checks variables before sending.
 - Each agency uses its **own** WhatsApp Business number.
+- **Meta charges per message** (since 1 October 2026 this includes in-window replies, after 1,000 free service messages per number per month, plus GST in India). A quote sent as text + PDF + photos is several messages. See `COSTS_AND_PRICING.md`.
 - In the current local environment every message is labelled **SIMULATED**; nothing reaches real WhatsApp.
 
 ## 8. AI assistance (optional)

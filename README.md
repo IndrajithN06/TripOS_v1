@@ -28,3 +28,4 @@ Web http://localhost:3100 · API http://localhost:4100
 | [DECISIONS_AND_ASSUMPTIONS](docs/DECISIONS_AND_ASSUMPTIONS.md) | decisions made, business assumptions, open questions |
 | [IMPLEMENTATION_PLAN](docs/IMPLEMENTATION_PLAN.md) | phase status and what changed since |
 | [ROADMAP](docs/ROADMAP.md) | finishing V1, future phases, extension rules |
+| [COSTS_AND_PRICING](docs/COSTS_AND_PRICING.md) | investment to go live, running costs, suggested subscription tiers, break-even |

@@ -11,6 +11,7 @@ Status: the Cloud API adapter (`CloudWhatsApp`) is written but has **never been 
 | WhatsApp Business Account ID (**WABA ID**) | entered in Settings → WhatsApp |
 | **Phone number ID** of the agency's number | entered in Settings → WhatsApp |
 | Permanent **system-user access token** (scopes `whatsapp_business_messaging`, `whatsapp_business_management`) | entered in Settings → WhatsApp (stored encrypted, shown once) |
+| A **payment method** on the WhatsApp Business Account | Meta charges per message (see §7) |
 | A public HTTPS URL to the API | webhook callback |
 | Approved message templates | needed for business-initiated messages |
 
@@ -54,7 +55,8 @@ Create templates in **Meta Business Manager** (category, language, body with `{{
 - Media: outbound uploads send bytes to Meta then reference the media ID; inbound media is downloaded with the token. Not yet exercised live.
 - Error-code mapping is generic (Meta error code and message are stored on the failed message).
 - Token expiry/revocation is detected only when a send fails.
-- Meta's per-conversation pricing and quality rating apply; monitor the quality rating before scaling.
+- **Meta now bills per message.** Per Meta's developer documentation, service messages (free-form replies inside the 24 h window) and utility messages inside the window became chargeable on 1 October 2026, with 1,000 free service messages per business phone number per month. Marketing, utility and authentication templates are charged by category. A **payment method must be on file** for the WhatsApp Business Account or Meta stops delivering chargeable messages. India is billed in INR plus 18% GST. Check the current INR rate card (Meta publishes it as CSV/PDF) before quoting prices. See `COSTS_AND_PRICING.md`.
+- Monitor the quality rating before scaling.
 
 ## 8. Before using real customers' numbers
 Get explicit approval (see `PRODUCTION_DEPLOYMENT.md`), use a staging number first, and confirm consent and privacy notices.
