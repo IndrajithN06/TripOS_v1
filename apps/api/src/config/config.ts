@@ -1,4 +1,9 @@
+import { config as loadDotenv } from 'dotenv';
 import { z } from 'zod';
+
+// Development convenience: read apps/api/.env if present. Never overrides variables that are already set
+// (so tests and real deployments, which inject their environment, are unaffected).
+loadDotenv({ quiet: true });
 
 const bool = z.enum(['true', 'false']).default('false').transform((v) => v === 'true');
 
