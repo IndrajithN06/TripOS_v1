@@ -8,3 +8,4 @@ dist
 apps/api/storage
 *.log
 coverage
+apps/api/storage-test
