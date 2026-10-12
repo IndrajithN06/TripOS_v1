@@ -46,6 +46,11 @@ describe('Scenario 11: production configuration safety', () => {
   it('requires core settings', () => {
     expect(() => validateConfig({ NODE_ENV: 'development' })).toThrow(/DATABASE_URL/);
   });
+  it('in development, cloud WhatsApp needs the app secret and verify token (else the webhook silently fails)', () => {
+    expect(() => validateConfig({ ...devEnv, WHATSAPP_PROVIDER: 'cloud' })).toThrow(/WHATSAPP_APP_SECRET[\s\S]*WHATSAPP_VERIFY_TOKEN/);
+    expect(() => validateConfig({ ...devEnv, WHATSAPP_PROVIDER: 'cloud', WHATSAPP_APP_SECRET: 's', WHATSAPP_VERIFY_TOKEN: 'v' })).not.toThrow();
+    expect(() => validateConfig({ ...devEnv, WHATSAPP_PROVIDER: 'simulator' })).not.toThrow(); // simulator unaffected
+  });
   afterAll(resetConfigForTests);
 });
 
