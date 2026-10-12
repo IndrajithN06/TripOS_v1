@@ -7,7 +7,7 @@ Node 20+ (tested on 22), npm 10+, Docker (for PostgreSQL). No paid services are 
 ```bash
 npm install
 docker compose up -d                       # PostgreSQL 16 on localhost:5442 (also creates the non-superuser app role)
-cp apps/api/.env.example apps/api/.env     # already provided for dev; contains only dev placeholders
+cp apps/api/.env.example apps/api/.env     # required once on a fresh clone (.env is git-ignored); dev placeholders only
 npm run build:pricing
 npm run db:migrate                         # applies migrations (tables, RLS, constraints, triggers)
 npm run db:seed                            # two synthetic agencies + a super admin
