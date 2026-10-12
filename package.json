@@ -1,0 +1,22 @@
+{
+  "name": "tripos-v1",
+  "private": true,
+  "version": "1.0.0",
+  "workspaces": ["packages/*", "apps/*"],
+  "scripts": {
+    "infra:up": "docker compose up -d",
+    "infra:down": "docker compose down",
+    "build:pricing": "npm run build -w @tripos/pricing",
+    "dev": "npm run build:pricing && concurrently -n api,web -c blue,green \"npm run start:dev -w @tripos/api\" \"npm run dev -w @tripos/web\"",
+    "build": "npm run build:pricing && npm run build -w @tripos/api && npm run build -w @tripos/web",
+    "lint": "npm run lint --workspaces --if-present",
+    "typecheck": "npm run build:pricing && npm run typecheck --workspaces --if-present",
+    "test": "npm run build:pricing && npm run test --workspaces --if-present",
+    "test:e2e": "npm run build:pricing && npm run test:e2e -w @tripos/api",
+    "db:migrate": "npm run db:migrate -w @tripos/api",
+    "db:seed": "npm run db:seed -w @tripos/api",
+    "db:reset": "npm run db:reset -w @tripos/api"
+  },
+  "devDependencies": { "concurrently": "^9.0.0", "typescript": "^5.6.0" },
+  "engines": { "node": ">=20" }
+}

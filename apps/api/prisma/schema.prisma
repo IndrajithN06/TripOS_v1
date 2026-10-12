@@ -1,0 +1,384 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DATABASE_MIGRATE_URL")
+}
+
+enum Role {
+  SUPER_ADMIN
+  AGENCY_ADMIN
+  SALES
+}
+
+model Agency {
+  id                String   @id @default(uuid()) @db.Uuid
+  name              String
+  legalName         String?
+  slug              String   @unique
+  status            String   @default("setup_pending") // setup_pending | active | suspended
+  timezone          String   @default("Asia/Kolkata")
+  currency          String   @default("INR")
+  plan              String   @default("standard")
+  aiEnabled         Boolean  @default(true)
+  aiMonthlyLimit    Int      @default(200) // calls per calendar month; 0 = unlimited
+  salesVisibility   String   @default("all") // all | assigned
+  taxEnabled        Boolean  @default(false)
+  taxRatePercent    Decimal  @default(0) @db.Decimal(5, 2)
+  taxMode           String   @default("exclusive")
+  quoteValidityDays Int      @default(7)
+  quoteSeq          Int      @default(0)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+}
+
+model User {
+  id               String    @id @default(uuid()) @db.Uuid
+  agencyId         String?   @db.Uuid
+  name             String
+  email            String    @unique
+  passwordHash     String?
+  role             Role
+  status           String    @default("invited") // invited | active | disabled
+  mfaSecret        String?
+  mfaEnabled       Boolean   @default(false)
+  canOverrideRates Boolean   @default(true)
+  lastLoginAt      DateTime?
+  tokenVersion     Int       @default(0)
+  createdAt        DateTime  @default(now())
+
+  @@index([agencyId])
+}
+
+model Invitation {
+  id        String    @id @default(uuid()) @db.Uuid
+  agencyId  String?   @db.Uuid
+  userId    String    @db.Uuid
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId])
+}
+
+model AgencyBranding {
+  agencyId    String  @id @db.Uuid
+  logoAssetId String? @db.Uuid
+  brandColour String  @default("#157f58")
+  tagline     String?
+  phone       String?
+  email       String?
+  website     String?
+  address     String?
+  footer      String?
+  terms       String?
+  inclusions  String?
+  exclusions  String?
+}
+
+model WhatsappAccount {
+  id                  String   @id @default(uuid()) @db.Uuid
+  agencyId            String   @unique @db.Uuid
+  mode                String   @default("simulator") // simulator | cloud
+  wabaId              String?
+  phoneNumberId       String   @unique
+  credentialSecretRef String? // AES-GCM encrypted token; never returned to clients
+  displayName         String?
+  connectionStatus    String   @default("connected")
+  webhookSubscribed   Boolean  @default(false)
+  createdAt           DateTime @default(now())
+}
+
+model Customer {
+  id        String   @id @default(uuid()) @db.Uuid
+  agencyId  String   @db.Uuid
+  name      String
+  phoneE164 String
+  email     String?
+  notes     String?
+  createdAt DateTime @default(now())
+
+  @@unique([agencyId, phoneE164])
+  @@index([agencyId, name])
+}
+
+model Conversation {
+  id             String    @id @default(uuid()) @db.Uuid
+  agencyId       String    @db.Uuid
+  customerId     String    @db.Uuid
+  channel        String    @default("whatsapp")
+  status         String    @default("open") // open | pending | closed
+  assignedUserId String?   @db.Uuid
+  lastMessageAt  DateTime  @default(now())
+  lastInboundAt  DateTime?
+  unreadCount    Int       @default(0)
+  summary        String?
+  summaryAt      DateTime?
+  createdAt      DateTime  @default(now())
+
+  @@index([agencyId, lastMessageAt])
+  @@index([agencyId, customerId])
+}
+
+model ConversationNote {
+  id             String   @id @default(uuid()) @db.Uuid
+  agencyId       String   @db.Uuid
+  conversationId String   @db.Uuid
+  authorId       String   @db.Uuid
+  text           String
+  createdAt      DateTime @default(now())
+
+  @@index([agencyId, conversationId])
+}
+
+model Message {
+  id                String   @id @default(uuid()) @db.Uuid
+  agencyId          String   @db.Uuid
+  conversationId    String   @db.Uuid
+  providerMessageId String?
+  direction         String // inbound | outbound
+  type              String   @default("text") // text | image | document | audio | template
+  text              String?
+  mediaAssetId      String?  @db.Uuid
+  status            String   @default("queued") // queued | submitted | sent | delivered | read | failed | received
+  errorCode         String?
+  errorMessage      String?
+  simulated         Boolean  @default(false)
+  sentByUserId      String?  @db.Uuid
+  templateId        String?  @db.Uuid
+  idempotencyKey    String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@unique([agencyId, providerMessageId])
+  @@unique([agencyId, idempotencyKey])
+  @@index([agencyId, conversationId, createdAt])
+}
+
+model WebhookEvent {
+  id        String   @id @default(uuid()) @db.Uuid
+  agencyId  String   @db.Uuid
+  eventKey  String
+  createdAt DateTime @default(now())
+
+  @@unique([agencyId, eventKey])
+}
+
+model VehicleType {
+  id          String   @id @default(uuid()) @db.Uuid
+  agencyId    String   @db.Uuid
+  name        String
+  category    String
+  seats       Int
+  description String?
+  amenities   String[]
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([agencyId, name])
+}
+
+model VehicleRate {
+  id                   String   @id @default(uuid()) @db.Uuid
+  agencyId             String   @db.Uuid
+  vehicleTypeId        String   @db.Uuid
+  local8hHours         Int      @default(8)
+  local8hKm            Int      @default(80)
+  local8h80kmPrice     Decimal  @db.Decimal(18, 2)
+  local4hHours         Int      @default(4)
+  local4hKm            Int      @default(40)
+  local4h40kmPrice     Decimal  @db.Decimal(18, 2)
+  extraHourRate        Decimal  @db.Decimal(18, 2)
+  extraKmRate          Decimal  @db.Decimal(18, 2)
+  outstationRatePerKm  Decimal  @db.Decimal(18, 2)
+  minKmPerDay          Int
+  driverBattaPerDay    Decimal  @db.Decimal(18, 2)
+  defaultToll          Decimal? @db.Decimal(18, 2)
+  defaultParking       Decimal? @db.Decimal(18, 2)
+  defaultPermit        Decimal? @db.Decimal(18, 2)
+  defaultInterstateTax Decimal? @db.Decimal(18, 2)
+  effectiveAt          DateTime @default(now())
+
+  @@index([agencyId, vehicleTypeId, effectiveAt])
+}
+
+model Asset {
+  id          String   @id @default(uuid()) @db.Uuid
+  agencyId    String   @db.Uuid
+  storageKey  String
+  mimeType    String
+  size        Int
+  checksum    String
+  assetType   String // vehicle_image | logo | quote_pdf | message_media
+  createdById String?  @db.Uuid
+  createdAt   DateTime @default(now())
+
+  @@index([agencyId, assetType])
+}
+
+model VehicleTypeImage {
+  id            String  @id @default(uuid()) @db.Uuid
+  agencyId      String  @db.Uuid
+  vehicleTypeId String  @db.Uuid
+  assetId       String  @db.Uuid
+  sortOrder     Int     @default(0)
+  isPrimary     Boolean @default(false)
+  caption       String?
+  altText       String?
+
+  @@index([agencyId, vehicleTypeId, sortOrder])
+}
+
+model Quote {
+  id               String    @id @default(uuid()) @db.Uuid
+  agencyId         String    @db.Uuid
+  quoteNumber      String
+  customerId       String    @db.Uuid
+  conversationId   String?   @db.Uuid
+  ownerUserId      String    @db.Uuid
+  status           String    @default("draft")
+  currentVersionId String?   @db.Uuid
+  expiryAt         DateTime?
+  followUpAt       DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  @@unique([agencyId, quoteNumber])
+  @@index([agencyId, status])
+  @@index([agencyId, createdAt])
+}
+
+model QuoteVersion {
+  id            String    @id @default(uuid()) @db.Uuid
+  agencyId      String    @db.Uuid
+  quoteId       String    @db.Uuid
+  versionNumber Int
+  status        String    @default("draft") // draft | sending | sent | partially_sent | failed
+  trip          Json
+  vehicleTypeId String    @db.Uuid
+  vehicleName   String
+  rateSnapshot  Json
+  pricingInput  Json
+  lines         Json
+  subtotal      Decimal   @db.Decimal(18, 2)
+  discount      Decimal   @db.Decimal(18, 2)
+  tax           Decimal   @db.Decimal(18, 2)
+  total         Decimal   @db.Decimal(18, 2)
+  termsSnapshot Json
+  pdfAssetId    String?   @db.Uuid
+  createdById   String    @db.Uuid
+  createdAt     DateTime  @default(now())
+  sentAt        DateTime?
+
+  @@unique([quoteId, versionNumber])
+  @@index([agencyId, quoteId])
+}
+
+model QuoteVersionImage {
+  id             String @id @default(uuid()) @db.Uuid
+  agencyId       String @db.Uuid
+  quoteVersionId String @db.Uuid
+  assetId        String @db.Uuid
+  sortOrder      Int    @default(0)
+
+  @@unique([quoteVersionId, assetId])
+}
+
+// Message-to-quote links and per-item send attempts (text / pdf / each image).
+model QuoteSendAttempt {
+  id             String   @id @default(uuid()) @db.Uuid
+  agencyId       String   @db.Uuid
+  quoteVersionId String   @db.Uuid
+  kind           String // text | pdf | image
+  assetId        String?  @db.Uuid
+  messageId      String?  @db.Uuid
+  status         String   @default("pending") // pending | sent | failed
+  attempts       Int      @default(0)
+  lastError      String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([agencyId, quoteVersionId])
+}
+
+model WhatsappTemplate {
+  id                 String   @id @default(uuid()) @db.Uuid
+  agencyId           String   @db.Uuid
+  name               String
+  language           String   @default("en")
+  category           String   @default("UTILITY")
+  body               String
+  variableSchema     Json     @default("[]")
+  providerTemplateId String?
+  providerStatus     String   @default("local_draft") // local_draft | submitted | pending | approved | rejected | paused
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  @@unique([agencyId, name, language])
+}
+
+model AiUsage {
+  id            String   @id @default(uuid()) @db.Uuid
+  agencyId      String   @db.Uuid
+  userId        String?  @db.Uuid
+  feature       String
+  model         String
+  inputTokens   Int      @default(0)
+  outputTokens  Int      @default(0)
+  estimatedCost Decimal  @default(0) @db.Decimal(18, 6)
+  status        String   @default("ok")
+  createdAt     DateTime @default(now())
+
+  @@index([agencyId, createdAt])
+}
+
+model AuditLog {
+  id          String   @id @default(uuid()) @db.Uuid
+  agencyId    String?  @db.Uuid
+  actorUserId String?  @db.Uuid
+  action      String
+  entityType  String
+  entityId    String?
+  metadata    Json     @default("{}")
+  createdAt   DateTime @default(now())
+
+  @@index([agencyId, createdAt])
+}
+
+// Postgres-backed job queue (see docs/TECHNICAL_ARCHITECTURE.md for why not Redis in V1).
+model Job {
+  id          String   @id @default(uuid()) @db.Uuid
+  agencyId    String   @db.Uuid
+  type        String
+  payload     Json
+  status      String   @default("pending") // pending | running | done | failed
+  attempts    Int      @default(0)
+  maxAttempts Int      @default(4)
+  runAt       DateTime @default(now())
+  lastError   String?
+  createdAt   DateTime @default(now())
+
+  @@index([status, runAt])
+}
+
+model PlatformSetting {
+  key   String @id
+  value Json
+}
+
+// Explicit, time-limited, audited cross-tenant support access.
+model SupportAccessGrant {
+  id           String   @id @default(uuid()) @db.Uuid
+  superAdminId String   @db.Uuid
+  agencyId     String   @db.Uuid
+  reason       String
+  expiresAt    DateTime
+  createdAt    DateTime @default(now())
+
+  @@index([superAdminId, agencyId])
+}
