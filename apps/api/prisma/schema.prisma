@@ -88,9 +88,22 @@ model WhatsappAccount {
   phoneNumberId       String   @unique
   credentialSecretRef String? // AES-GCM encrypted token; never returned to clients
   displayName         String?
-  connectionStatus    String   @default("connected")
+  connectionStatus    String   @default("connected") // connecting | connected | degraded | disconnected
   webhookSubscribed   Boolean  @default(false)
+  statusReason        String? // plain-language explanation shown to admins when not connected
+  displayPhoneNumber  String?
+  verifiedName        String?
+  displayNameStatus   String? // as reported by Meta (e.g. APPROVED, PENDING_REVIEW, DECLINED)
+  qualityRating       String? // GREEN | YELLOW | RED | UNKNOWN, as reported by Meta
+  messagingLimitTier  String? // as reported by Meta (e.g. TIER_1K)
+  subscribedAt        DateTime?
+  lastWebhookAt       DateTime?
+  lastCheckedAt       DateTime?
+  lastErrorCode       String?
+  lastErrorAt         DateTime?
   createdAt           DateTime @default(now())
+
+  @@index([wabaId])
 }
 
 model Customer {
@@ -316,6 +329,8 @@ model WhatsappTemplate {
   variableSchema     Json     @default("[]")
   providerTemplateId String?
   providerStatus     String   @default("local_draft") // local_draft | submitted | pending | approved | rejected | paused
+  rejectedReason     String?
+  lastSyncedAt       DateTime?
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
 

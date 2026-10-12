@@ -40,7 +40,7 @@ export async function superAdmin(app: INestApplication) {
 export interface Tenant { agencyId: string; slug: string; admin: Client; sales: Client; adminEmail: string; salesEmail: string; salesId: string; adminId: string; phoneNumberId: string }
 
 /** Full onboarding through the public API: super admin creates the agency, invites are accepted, WhatsApp (simulated) is connected. */
-export async function onboard(app: INestApplication, sa: Client, label = 'Agency'): Promise<Tenant> {
+export async function onboard(app: INestApplication, sa: Client, label = 'Agency', opts: { connect?: boolean } = {}): Promise<Tenant> {
   const slug = `${label.toLowerCase()}-${uid()}`;
   const adminEmail = `admin-${slug}@test.local`, salesEmail = `sales-${slug}@test.local`;
   const created = await sa.post('/platform/agencies', { name: `${label} ${slug}`, slug, adminName: 'Admin', adminEmail });
@@ -55,7 +55,7 @@ export async function onboard(app: INestApplication, sa: Client, label = 'Agency
   const inv = await admin.post('/agency/users', { name: 'Sales Person', email: salesEmail, role: 'SALES' });
   await acceptInvite(inv.body.inviteUrl);
   const sales = await new Client(app).login(salesEmail);
-  const wa = await admin.post('/agency/whatsapp/connect', { displayName: `${label} line` });
+  const wa = opts.connect === false ? { body: { phoneNumberId: '' } } : await admin.post('/agency/whatsapp/connect', { displayName: `${label} line` });
   const users = (await admin.get('/agency/users')).body;
   return {
     agencyId: created.body.id, slug, admin, sales, adminEmail, salesEmail, phoneNumberId: wa.body.phoneNumberId,

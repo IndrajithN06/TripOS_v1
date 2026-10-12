@@ -45,7 +45,15 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
           <div className="who">{me.user.name}<br />{me.user.role.replace('_', ' ').toLowerCase()}</div>
           <a href="#" onClick={(e) => { e.preventDefault(); void api('/auth/logout', { method: 'POST' }).then(() => (location.href = '/login')); }}>Sign out</a>
         </nav>
-        <main className="main">{children}</main>
+        <main className="main">
+          {me.agency?.whatsapp && ['degraded', 'disconnected'].includes(me.agency.whatsapp.status) && (
+            <div className="banner err" role="alert" style={{ marginBottom: 14 }}>
+              <strong>WhatsApp is {me.agency.whatsapp.status === 'degraded' ? 'having problems' : 'disconnected'}.</strong> Messages may not send or arrive. {me.agency.whatsapp.reason}{' '}
+              {me.user.role === 'AGENCY_ADMIN' ? <Link href="/settings">Open Settings → WhatsApp</Link> : 'Please tell your agency admin.'}
+            </div>
+          )}
+          {children}
+        </main>
       </div>
       </RefreshMeContext.Provider>
     </MeContext.Provider>

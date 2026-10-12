@@ -1,6 +1,6 @@
 # WhatsApp Integration Design (onboarding and scale)
 
-Status: **proposal**. It builds on what exists (`providers/whatsapp`, `webhooks`, `outbound.service.ts`, `WhatsappAccount`) and on `WHATSAPP_GO_LIVE.md`. Statements about Meta's APIs are from the author's knowledge and **must be verified against Meta's current documentation** before implementation; items to verify are listed in section 11.
+Status: **proposal; phase A (section 12) is implemented on branch `feature/whatsapp-real-integration`** (verified with mocked Meta responses only; not yet run against the real service). It builds on what exists (`providers/whatsapp`, `webhooks`, `outbound.service.ts`, `WhatsappAccount`) and on `WHATSAPP_GO_LIVE.md`. Statements about Meta's APIs are from the author's knowledge and **must be verified against Meta's current documentation** before implementation; items to verify are listed in section 11.
 
 ## 1. Goals
 1. A new agency connects its own WhatsApp number in **minutes, self-service**, with no developer involved.

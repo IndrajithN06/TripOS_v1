@@ -5,7 +5,7 @@ import { STATUS_LABEL } from '@/lib/format';
 
 export interface Me {
   user: { id: string; name: string; email: string; role: 'SUPER_ADMIN' | 'AGENCY_ADMIN' | 'SALES'; mfaEnabled: boolean; canOverrideRates: boolean };
-  agency: { id: string; name: string; status: string; timezone: string; brandColour: string; logoUrl: string | null; salesVisibility: string } | null;
+  agency: { id: string; name: string; status: string; timezone: string; brandColour: string; logoUrl: string | null; salesVisibility: string; whatsapp?: { status: string; reason: string | null; simulated: boolean } | null } | null;
   permissions: string[];
   environment: { nodeEnv: string; whatsapp: string; whatsappSimulated: boolean; ai: string; aiAvailable: boolean; storage: string };
 }

@@ -90,27 +90,48 @@ function Team() {
 }
 
 function WhatsApp() {
-  const me = useMe(), run = useAction();
+  const me = useMe(), run = useAction(), refreshMe = useRefreshMe();
   const { data, error, reload } = useApi<any>('/agency/whatsapp');
   const [f, setF] = useState({ displayName: '', wabaId: '', phoneNumberId: '', accessToken: '' });
+  const [confirmOff, setConfirmOff] = useState(false);
   const cloud = !me.environment.whatsappSimulated;
   if (error) return <ErrorBox e={error} retry={reload} />;
   if (!data) return <Loading />;
   return (
     <div className="card stack" style={{ maxWidth: 640 }}>
       <div className="row between"><h2 style={{ margin: 0 }}>WhatsApp Business connection</h2>{data.simulated && <SimTag />}</div>
-      {data.connected ? (
+      {data.phoneNumberId ? (
         <>
-          <div className="row"><StatusBadge s={data.connectionStatus} /><span>{data.displayName}</span></div>
-          <div className="small muted">Phone number ID: {data.phoneNumberId} · mode: {data.mode} · credential stored encrypted: {data.hasCredential ? 'yes' : 'no'}</div>
+          <div className="row"><StatusBadge s={data.connectionStatus} /><strong>{data.displayName}</strong>{data.displayPhoneNumber && <span className="muted">{data.displayPhoneNumber}</span>}</div>
+          {data.statusReason && <div className={`banner ${data.connectionStatus === 'connected' ? 'warn' : 'err'} small`} role="alert">{data.statusReason}</div>}
+          <table className="small"><tbody>
+            <tr><td className="muted">Phone number ID</td><td>{data.phoneNumberId}</td></tr>
+            {data.wabaId && <tr><td className="muted">WABA ID</td><td>{data.wabaId}</td></tr>}
+            <tr><td className="muted">Credential stored (encrypted)</td><td>{data.hasCredential ? 'yes' : 'no'}</td></tr>
+            {!data.simulated && <>
+              <tr><td className="muted">Display name status</td><td>{data.displayNameStatus ?? '-'}{data.verifiedName ? ` (${data.verifiedName})` : ''}</td></tr>
+              <tr><td className="muted">Quality rating</td><td>{data.qualityRating ?? '-'}</td></tr>
+              <tr><td className="muted">Messaging limit</td><td>{data.messagingLimitTier ?? '-'}</td></tr>
+              <tr><td className="muted">Webhook subscribed</td><td>{data.webhookSubscribed ? `yes (${data.subscribedAt ? new Date(data.subscribedAt).toLocaleString() : ''})` : 'no'}</td></tr>
+              <tr><td className="muted">Last event received</td><td>{data.lastWebhookAt ? new Date(data.lastWebhookAt).toLocaleString() : 'none yet'}</td></tr>
+              <tr><td className="muted">Last health check</td><td>{data.lastCheckedAt ? new Date(data.lastCheckedAt).toLocaleString() : '-'}</td></tr>
+              {data.lastErrorCode && <tr><td className="muted">Last error</td><td>{data.lastErrorCode}</td></tr>}
+            </>}
+          </tbody></table>
           {data.simulated && <div className="banner warn small">This is the local simulator. No real WhatsApp account is connected and no real messages are sent.</div>}
+          <div className="row">
+            <button className="btn sm" onClick={() => run(() => api('/agency/whatsapp/refresh', { body: {} }), 'Status refreshed').then(reload)}>Check status now</button>
+            {data.connected && (confirmOff
+              ? <><span className="small">Stop using this number?</span><button className="btn sm danger" onClick={() => run(() => api('/agency/whatsapp/disconnect', { body: {} }), 'Disconnected').then(() => { setConfirmOff(false); void refreshMe(); reload(); })}>Yes, disconnect</button><button className="btn sm" onClick={() => setConfirmOff(false)}>Cancel</button></>
+              : <button className="btn sm danger" onClick={() => setConfirmOff(true)}>Disconnect</button>)}
+          </div>
         </>
       ) : <div className="muted">Not connected.</div>}
       <h3>{data.connected ? 'Reconnect' : 'Connect'}</h3>
       {cloud && <div className="small muted">Complete Meta Embedded Signup, then paste the WABA ID, phone number ID and a system-user access token. The token is encrypted at rest and never shown again.</div>}
       <Field label="Display name"><input value={f.displayName} onChange={(e) => setF({ ...f, displayName: e.target.value })} /></Field>
       {cloud && <div className="fields"><Field label="WABA ID"><input value={f.wabaId} onChange={(e) => setF({ ...f, wabaId: e.target.value })} /></Field><Field label="Phone number ID"><input value={f.phoneNumberId} onChange={(e) => setF({ ...f, phoneNumberId: e.target.value })} /></Field><Field label="Access token"><input type="password" autoComplete="off" value={f.accessToken} onChange={(e) => setF({ ...f, accessToken: e.target.value })} /></Field></div>}
-      <div><button className="btn primary" onClick={() => run(() => api('/agency/whatsapp/connect', { body: cloud ? f : { displayName: f.displayName } }), 'Connected').then(reload)}>{data.connected ? 'Update connection' : 'Connect'}</button></div>
+      <div><button className="btn primary" onClick={() => run(() => api('/agency/whatsapp/connect', { body: cloud ? f : { displayName: f.displayName } }), cloud ? 'Connected and webhook subscribed' : 'Connected').then((r) => { if (r !== undefined) { setF({ ...f, accessToken: '' }); void refreshMe(); } reload(); })}>{data.phoneNumberId ? 'Update connection' : 'Connect'}</button></div>
     </div>
   );
 }
@@ -122,7 +143,8 @@ function Templates() {
   return (
     <div className="stack">
       <ErrorBox e={error} retry={reload} />
-      <div className="banner ok small">Status is whatever the provider reports. A template is never treated as approved until the provider confirms it.</div>
+      <div className="banner ok small row between"><span>Status is whatever the provider reports. A template is never treated as approved until the provider confirms it.</span>
+        <button className="btn sm" onClick={() => run(async () => { const r = await api('/agency/whatsapp/templates/sync', { body: {} }); return r; }, 'Templates synced from WhatsApp').then(reload)}>{me.environment.whatsappSimulated ? 'Sync (simulated)' : 'Sync from Meta'}</button></div>
       <div className="card stack">
         <h2>New template draft</h2>
         <div className="fields"><Field label="Name (lowercase_underscores)"><input value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} /></Field><Field label="Variable names, comma separated"><input value={f.vars} onChange={(e) => setF({ ...f, vars: e.target.value })} placeholder="customer_name, quote_number" /></Field></div>
@@ -132,9 +154,10 @@ function Templates() {
       <div className="card table-wrap">
         {data?.length === 0 ? <Empty>No templates.</Empty> : (
           <table><thead><tr><th>Name</th><th>Body</th><th>Provider status</th><th /></tr></thead><tbody>{data?.map((t) => (
-            <tr key={t.id}><td>{t.name}</td><td className="small">{t.body}</td><td><StatusBadge s={t.providerStatus} /></td>
+            <tr key={t.id}><td>{t.name}<div className="small muted">{t.language} · {t.category}</div></td><td className="small">{t.body}</td>
+              <td><StatusBadge s={t.providerStatus} />{t.rejectedReason && <div className="small" style={{ color: 'var(--red)' }}>{t.rejectedReason}</div>}</td>
               <td><div className="row">
-                {t.providerStatus === 'local_draft' && <button className="btn sm" onClick={() => run(() => api(`/agency/whatsapp/templates/${t.id}/submit`, { body: {} }), 'Submitted').then(reload)}>Submit for approval</button>}
+                {['local_draft', 'rejected'].includes(t.providerStatus) && <button className="btn sm" onClick={() => run(() => api(`/agency/whatsapp/templates/${t.id}/submit`, { body: {} }), 'Submitted').then(reload)}>{t.providerStatus === 'rejected' ? 'Resubmit' : 'Submit for approval'}</button>}
                 {me.environment.whatsappSimulated && ['submitted', 'pending'].includes(t.providerStatus) && <><SimTag /><button className="btn sm" onClick={() => run(() => api('/dev/simulator/template-decision', { body: { templateId: t.id, status: 'approved' } })).then(reload)}>Simulate approve</button><button className="btn sm" onClick={() => run(() => api('/dev/simulator/template-decision', { body: { templateId: t.id, status: 'rejected' } })).then(reload)}>Simulate reject</button></>}
               </div></td></tr>))}</tbody></table>
         )}

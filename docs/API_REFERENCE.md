@@ -54,10 +54,13 @@ Base URL (local): `http://localhost:4100`. The web app calls the API through its
 | POST | `/agency/branding/logo` | multipart `file` (JPEG/PNG, 5 MB) |
 | GET/PATCH | `/agency/settings` | `salesVisibility`, tax (`taxEnabled`, `taxRatePercent`, `taxMode`), `quoteValidityDays`, `aiEnabled`; GET includes AI usage |
 | GET | `/agency/audit` | latest 100 audit entries |
-| GET | `/agency/whatsapp` | connection status (never the token) |
-| POST | `/agency/whatsapp/connect` | simulator: `{displayName}`; cloud: also `wabaId`, `phoneNumberId`, `accessToken` (stored encrypted) |
-| GET (any) / POST | `/agency/whatsapp/templates` | local drafts; variable count validated |
-| POST | `/agency/whatsapp/templates/:id/submit` | simulator only; cloud mode returns "not implemented" |
+| GET | `/agency/whatsapp` | connection view (never the token): `connectionStatus` (connecting/connected/degraded/disconnected), `statusReason`, quality rating, messaging limit tier, display-name status, `webhookSubscribed`, `lastWebhookAt`, `lastCheckedAt`, `lastErrorCode` |
+| POST | `/agency/whatsapp/connect` | simulator: `{displayName}`; cloud: also `wabaId`, `phoneNumberId`, `accessToken`. Cloud mode verifies the token, subscribes the webhook, then stores the token encrypted; any failure stores nothing. `409` if the number or WABA belongs to another agency. |
+| POST | `/agency/whatsapp/refresh` | re-check the number's health now; returns the connection view |
+| POST | `/agency/whatsapp/disconnect` | erases the stored credential; sends blocked, incoming events ignored |
+| GET (any) / POST | `/agency/whatsapp/templates` | local drafts; variable count validated; list includes `rejectedReason`, `providerTemplateId` |
+| POST | `/agency/whatsapp/templates/sync` | pull all templates and statuses from the provider |
+| POST | `/agency/whatsapp/templates/:id/submit` | submit a draft or rejected template to Meta (simulator: marks `submitted`); stores the provider's status, never "approved" |
 
 ## Vehicle types (read: any, write: AA)
 | Method | Path | Notes |

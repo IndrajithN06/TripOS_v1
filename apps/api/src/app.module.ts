@@ -20,18 +20,21 @@ import { PlatformController, PlatformService } from './modules/platform/platform
 import { QuotesController } from './modules/quotes/quotes.controller';
 import { QuotesService } from './modules/quotes/quotes.service';
 import { VehiclesController } from './modules/vehicles/vehicles.module';
+import { WhatsappAccountService } from './modules/whatsapp/whatsapp-account.service';
 import { InboundService, WebhooksController } from './modules/webhooks/webhooks.module';
 import { ProvidersModule } from './providers/providers.module';
 
 @Injectable()
 class WorkerBootstrap implements OnApplicationBootstrap {
-  constructor(private readonly jobs: JobsService, private readonly quotes: QuotesService) {}
+  constructor(private readonly jobs: JobsService, private readonly quotes: QuotesService, private readonly whatsapp: WhatsappAccountService) {}
   onApplicationBootstrap() {
     // Retry only what is still failing; items already sent are skipped by idempotency in execute().
     this.jobs.register('quote.retry', async (j) => { await this.quotes.execute(j.agencyId, j.payload.versionId, null); });
     if (config().NODE_ENV !== 'test' && process.env.JOBS_WORKER !== 'false') {
       this.jobs.start();
       setInterval(() => void this.quotes.expireOverdue().catch(() => undefined), 10 * 60 * 1000).unref();
+      // Real WhatsApp only: re-check token validity, quality rating and limits for every connected number.
+      if (config().WHATSAPP_PROVIDER === 'cloud') setInterval(() => void this.whatsapp.checkAll().catch(() => undefined), 15 * 60 * 1000).unref();
     }
   }
 }
@@ -50,7 +53,7 @@ class CoreModule {}
     DashboardController, AnalyticsController, HealthController, MediaController, DevController,
   ],
   providers: [
-    PlatformService, QuotesService, OutboundService, InboxService, InboundService, AiService, DashboardService, AnalyticsService, WorkerBootstrap,
+    PlatformService, WhatsappAccountService, QuotesService, OutboundService, InboxService, InboundService, AiService, DashboardService, AnalyticsService, WorkerBootstrap,
     { provide: APP_GUARD, useClass: ThrottlerGuard },
     { provide: APP_GUARD, useClass: CsrfGuard },
     { provide: APP_GUARD, useClass: AuthGuard },

@@ -48,9 +48,14 @@ Settings → WhatsApp → enter display name, WABA ID, phone number ID, access t
 6. Send the same webhook twice (Meta retries) and confirm no duplicate message.
 
 ## 6. Templates
-Create templates in **Meta Business Manager** (category, language, body with `{{1}}` variables). Mirror the name, language and variable list in Settings → Templates, then set the status. Automatic submission and status sync are **not built** (see `ROADMAP.md` R1). Until synced, mark status by hand in the database or build the sync first; only `approved` templates can be sent.
+Two ways, both supported:
+- **Create in TripOS and submit:** Settings → Templates → write the draft → **Submit for approval**. TripOS sends it to Meta and stores Meta's own status (normally `pending`). It is never treated as approved until Meta says so.
+- **Create in Meta Business Manager:** then press **Sync from Meta** (also done automatically when you connect). Templates found in Meta are added locally with their provider status and rejection reason.
+Status changes also arrive by webhook (`message_template_status_update`). Only `approved` templates can be sent. Rejected templates can be edited in Meta or resubmitted.
 
-## 7. Known gaps to expect on first contact
+## 7. What is built and what to expect on first contact
+Built (phase A, tested against a mocked Meta, **not yet against the real service**): credential check on connect (bad token is rejected with Meta's message); automatic webhook subscription for the agency's WABA; connection health (quality rating, messaging limit, display-name status, last webhook, last check) with states `connected / degraded / disconnected`; periodic health check every 15 minutes; template submit, sync and status webhooks; Meta error classification with plain-language hints; sends blocked while disconnected; a banner for all users when the connection is degraded.
+Still expected to need adjustment when first run live: field names and codes in real Meta responses; the Graph API version in `WHATSAPP_API_BASE_URL` (check it is currently supported); permissions on the token.
 - Embedded Signup (self-service onboarding) is not built; IDs and tokens are pasted in manually.
 - Media: outbound uploads send bytes to Meta then reference the media ID; inbound media is downloaded with the token. Not yet exercised live.
 - Error-code mapping is generic (Meta error code and message are stored on the failed message).

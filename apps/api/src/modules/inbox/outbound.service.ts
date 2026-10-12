@@ -2,7 +2,9 @@ import { BadRequestException, Inject, Injectable, NotFoundException } from '@nes
 import { decryptSecret } from '../../common/crypto';
 import { Db } from '../../db/db.service';
 import { STORAGE, StorageProvider } from '../../providers/storage/storage';
+import { hintForKind } from '../../providers/whatsapp/meta-errors';
 import { WaAccount, WaSendError, WHATSAPP, WhatsAppProvider } from '../../providers/whatsapp/whatsapp';
+import { WhatsappAccountService } from '../whatsapp/whatsapp-account.service';
 
 export const SERVICE_WINDOW_MS = 24 * 3600 * 1000;
 
@@ -24,7 +26,7 @@ export interface OutboundResult { ok: boolean; messageId: string; status: string
 
 @Injectable()
 export class OutboundService {
-  constructor(private readonly db: Db, @Inject(WHATSAPP) private readonly wa: WhatsAppProvider, @Inject(STORAGE) private readonly storage: StorageProvider) {}
+  constructor(private readonly db: Db, @Inject(WHATSAPP) private readonly wa: WhatsAppProvider, @Inject(STORAGE) private readonly storage: StorageProvider, private readonly accounts: WhatsappAccountService) {}
 
   /**
    * Sends one customer-facing message through the connected agency account.
@@ -37,7 +39,7 @@ export class OutboundService {
       if (!conv) throw new NotFoundException({ code: 'not_found', message: 'Conversation not found' });
       const customer = await tx.customer.findFirstOrThrow({ where: { id: conv.customerId, agencyId } });
       const account = await tx.whatsappAccount.findFirst({ where: { agencyId } });
-      if (!account) throw new BadRequestException({ code: 'whatsapp_not_connected', message: 'Connect a WhatsApp account in Settings first' });
+      if (!account || account.connectionStatus === 'disconnected') throw new BadRequestException({ code: 'whatsapp_not_connected', message: 'Connect a WhatsApp account in Settings first' });
 
       if (opts.idempotencyKey) {
         const prior = await tx.message.findFirst({ where: { agencyId, idempotencyKey: opts.idempotencyKey } });
@@ -94,8 +96,11 @@ export class OutboundService {
       return { ok: true, messageId: msg.id, status: 'submitted' };
     } catch (e) {
       const err = e instanceof WaSendError ? e : new WaSendError((e as Error).message, 'unexpected');
-      await this.db.tenant(agencyId, (tx) => tx.message.update({ where: { id: msg.id }, data: { status: 'failed', errorCode: err.code, errorMessage: err.message } }));
-      return { ok: false, messageId: msg.id, status: 'failed', errorCode: err.code, errorMessage: err.message };
+      const reason = err.kind === 'unknown' ? err.message : `${err.message}. ${hintForKind(err.kind)}`;
+      await this.db.tenant(agencyId, (tx) => tx.message.update({ where: { id: msg.id }, data: { status: 'failed', errorCode: err.code, errorMessage: reason } }));
+      // A revoked token or an account-level problem affects every send: surface it on the connection, not just this message.
+      if (err.kind === 'auth' || err.kind === 'account') await this.accounts.recordFailure(agencyId, err).catch(() => undefined);
+      return { ok: false, messageId: msg.id, status: 'failed', errorCode: err.code, errorMessage: reason };
     }
   }
 }

@@ -1,5 +1,5 @@
 import 'reflect-metadata';
-import { Logger } from '@nestjs/common';
+import { INestApplication, Logger } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import cookieParser from 'cookie-parser';
 import { json, urlencoded } from 'express';
@@ -7,9 +7,9 @@ import helmet from 'helmet';
 import { AppModule } from './app.module';
 import { config } from './config/config';
 
-export async function createApp() {
-  const cfg = config(); // fails fast with a precise message on unsafe/incomplete configuration
-  const app = await NestFactory.create(AppModule, { bodyParser: false, logger: cfg.NODE_ENV === 'test' ? false : undefined });
+/** Shared HTTP setup, also used by tests that build the app from a testing module with overridden providers. */
+export function configureApp<T extends INestApplication>(app: T): T {
+  const cfg = config();
   // Raw body is kept for WhatsApp webhook signature verification.
   app.use(json({ limit: '1mb', verify: (req: any, _res, buf) => { req.rawBody = buf; } }));
   app.use(urlencoded({ extended: false, limit: '100kb' }));
@@ -19,6 +19,12 @@ export async function createApp() {
   app.getHttpAdapter().getInstance().set('trust proxy', 1);
   app.getHttpAdapter().getInstance().disable('x-powered-by');
   return app;
+}
+
+export async function createApp() {
+  const cfg = config(); // fails fast with a precise message on unsafe/incomplete configuration
+  const app = await NestFactory.create(AppModule, { bodyParser: false, logger: cfg.NODE_ENV === 'test' ? false : undefined });
+  return configureApp(app);
 }
 
 async function bootstrap() {
