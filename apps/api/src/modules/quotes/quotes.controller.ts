@@ -55,6 +55,15 @@ export class QuotesController {
     return this.svc.send(p, agencyOf(p), id, n, body);
   }
 
+  @Get(':id/versions/:n/templates')
+  templateOptions(@CurrentUser() p: Principal, @Param('id', ParseUUIDPipe) id: string, @Param('n', ParseIntPipe) n: number) { return this.svc.templateOptions(p, agencyOf(p), id, n); }
+
+  @Post(':id/versions/:n/send-template')
+  sendTemplate(@CurrentUser() p: Principal, @Param('id', ParseUUIDPipe) id: string, @Param('n', ParseIntPipe) n: number, @Body() b: unknown) {
+    const body = parse(z.object({ templateId: z.string().uuid(), includePdf: z.boolean().optional(), followUpAt: iso.nullable().optional(), approvedTotal: z.string().regex(/^\d+(\.\d{1,2})?$/).optional() }), b ?? {});
+    return this.svc.sendWithTemplate(p, agencyOf(p), id, n, body);
+  }
+
   @Post(':id/versions/:n/retry')
   retry(@CurrentUser() p: Principal, @Param('id', ParseUUIDPipe) id: string, @Param('n', ParseIntPipe) n: number) { return this.svc.retry(p, agencyOf(p), id, n); }
 

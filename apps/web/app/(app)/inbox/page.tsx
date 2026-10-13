@@ -4,6 +4,7 @@ import { api, useApi } from '@/lib/api';
 import { fmtRelative, fmtTime, inr } from '@/lib/format';
 import { Empty, ErrorBox, Loading, SimTag, StatusBadge, errMsg, useAction, useMe } from '@/components/ui';
 import { QuoteBuilder } from '@/components/QuoteBuilder';
+import { InboxTemplateModal } from '@/components/InboxTemplateModal';
 
 const POLL_MS = 4000; // V1 uses short polling instead of SSE/WebSockets (see docs/DECISIONS_AND_ASSUMPTIONS.md)
 
@@ -47,11 +48,10 @@ function Conversation({ id, tick, onChanged }: { id: string; tick: number; onCha
   const me = useMe(), run = useAction();
   const detail = useApi<any>(`/inbox/conversations/${id}`, [tick]);
   const msgs = useApi<any>(`/inbox/conversations/${id}/messages?limit=100`, [tick]);
-  const templates = useApi<any[]>('/agency/whatsapp/templates');
   const users = useApi<any[]>(me.user.role === 'AGENCY_ADMIN' ? '/agency/users' : null);
   const [text, setText] = useState(''), [builder, setBuilder] = useState<{ quoteId?: string; prefill?: any } | null>(null), [sending, setSending] = useState(false);
   const [note, setNote] = useState(''), [ai, setAi] = useState<any>(null), [aiBusy, setAiBusy] = useState(false), [aiErr, setAiErr] = useState('');
-  const [tpl, setTpl] = useState(''), [vars, setVars] = useState<string[]>([]);
+  const [tplModal, setTplModal] = useState(false);
   const bottom = useRef<HTMLDivElement>(null), lastCount = useRef(0);
 
   useEffect(() => { void api(`/inbox/conversations/${id}/read`, { method: 'POST' }).then(onChanged).catch(() => undefined); }, [id]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -69,11 +69,6 @@ function Conversation({ id, tick, onChanged }: { id: string; tick: number; onCha
     else if (r && !r.ok) setText(text); // keep the draft so nothing is lost; failed bubble shows retry
     reload();
   }
-  async function sendTemplate() {
-    const t = templates.data?.find((x) => x.id === tpl); if (!t) return;
-    const r = await run(() => api(`/inbox/conversations/${id}/messages`, { body: { type: 'template', templateId: t.id, variables: vars, idempotencyKey: crypto.randomUUID() } }), 'Template sent');
-    if (r) { setTpl(''); setVars([]); reload(); }
-  }
   async function runAi(feature: string, body: object = {}) {
     setAiBusy(true); setAiErr('');
     try { setAi(await api(`/inbox/conversations/${id}/ai/${feature}`, { body })); if (feature === 'summary') void detail.reload(); }
@@ -87,7 +82,6 @@ function Conversation({ id, tick, onChanged }: { id: string; tick: number; onCha
 
   if (detail.error) return <section><ErrorBox e={detail.error} retry={detail.reload} /></section>;
   if (!d) return <section><Loading /></section>;
-  const selectedTpl = templates.data?.find((x) => x.id === tpl);
 
   return (
     <>
@@ -122,23 +116,14 @@ function Conversation({ id, tick, onChanged }: { id: string; tick: number; onCha
         <div className="composer">
           {ai?.output?.replies && <div className="chips" aria-label="Suggested replies (drafts)">{ai.output.replies.map((r: string, i: number) => <button key={i} className="chip" onClick={() => setText(r)} title="Click to edit before sending">💡 {r.slice(0, 70)}…</button>)}</div>}
           {ai?.output?.reply && <div className="chips"><button className="chip" onClick={() => setText(ai.output.reply)}>💡 Use suggested reply</button></div>}
-          <textarea aria-label="Message" placeholder={d.windowOpen ? 'Type a message…' : 'Window closed: choose an approved template below'} disabled={!d.windowOpen} value={text} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) void sendText(); }} />
+          <textarea aria-label="Message" placeholder={d.windowOpen ? 'Type a message…' : 'Window closed: use Templates to send an approved template'} disabled={!d.windowOpen} value={text} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) void sendText(); }} />
           <div className="row between">
             <div className="row">
-              <select aria-label="Template" value={tpl} onChange={(e) => { setTpl(e.target.value); const t = templates.data?.find((x) => x.id === e.target.value); setVars(new Array(t?.variableSchema.length ?? 0).fill('')); }} style={{ width: 200 }}>
-                <option value="">Use template…</option>{templates.data?.map((t) => <option key={t.id} value={t.id} disabled={t.providerStatus !== 'approved'}>{t.name} ({t.providerStatus})</option>)}
-              </select>
+              <button className="btn sm" onClick={() => setTplModal(true)}>📋 Templates</button>
               <button className="btn sm" onClick={() => runAi('reply-suggestions')} disabled={aiBusy}>💡 Suggest replies</button>
             </div>
             <button className="btn primary" disabled={sending || !text.trim() || !d.windowOpen} onClick={sendText}>{sending ? 'Sending…' : 'Send'}</button>
           </div>
-          {selectedTpl && (
-            <div className="card stack">
-              <div className="small muted">{selectedTpl.body}</div>
-              {selectedTpl.variableSchema.map((v: string, i: number) => <input key={i} placeholder={`{{${i + 1}}} ${v}`} value={vars[i] ?? ''} onChange={(e) => setVars(vars.map((x, j) => (j === i ? e.target.value : x)))} />)}
-              <button className="btn blue" onClick={sendTemplate}>Send template</button>
-            </div>
-          )}
         </div>
       </section>
 
@@ -191,6 +176,7 @@ function Conversation({ id, tick, onChanged }: { id: string; tick: number; onCha
         {me.environment.whatsappSimulated && <SimulatorPanel onDone={reload} />}
       </section>
 
+      {tplModal && <InboxTemplateModal conversationId={id} quotes={d.quotes} windowOpen={d.windowOpen} onClose={() => setTplModal(false)} onSent={reload} />}
       {builder && <QuoteBuilder conversationId={id} quoteId={builder.quoteId} prefill={builder.prefill} onClose={() => { setBuilder(null); reload(); }} onChanged={reload} />}
     </>
   );

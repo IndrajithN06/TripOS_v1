@@ -4,6 +4,8 @@ import { Db } from '../../db/db.service';
 import { STORAGE, StorageProvider } from '../../providers/storage/storage';
 import { hintForKind } from '../../providers/whatsapp/meta-errors';
 import { WaAccount, WaSendError, WHATSAPP, WhatsAppProvider } from '../../providers/whatsapp/whatsapp';
+import { isRetryableFailure } from '../quotes/retry-policy';
+import { compile, TemplateSpec } from '../templates/template-spec';
 import { WhatsappAccountService } from '../whatsapp/whatsapp-account.service';
 
 export const SERVICE_WINDOW_MS = 24 * 3600 * 1000;
@@ -12,7 +14,14 @@ export type OutboundPayload =
   | { kind: 'text'; text: string }
   | { kind: 'document'; assetId: string; filename: string; caption?: string }
   | { kind: 'image'; assetId: string; caption?: string }
-  | { kind: 'template'; templateId: string; variables: string[] };
+  | { kind: 'template'; templateId: string; variables: string[]; extra?: TemplateExtra };
+
+/** The non-body parts of a template send: text-header value, media header (an agency asset) and dynamic URL-button values. */
+export interface TemplateExtra {
+  headerText?: string;
+  header?: { assetId: string; kind: 'image' | 'document'; filename?: string };
+  buttons?: { index: number; kind: 'url'; value: string }[];
+}
 
 interface Prepared {
   msg: { id: string };
@@ -20,9 +29,14 @@ interface Prepared {
   account: { phoneNumberId: string; credentialSecretRef: string | null };
   asset: { storageKey: string; mimeType: string } | null;
   template: { name: string; language: string } | null;
+  headerAsset: { storageKey: string; mimeType: string } | null;
 }
 
-export interface OutboundResult { ok: boolean; messageId: string; status: string; errorCode?: string; errorMessage?: string; deduplicated?: boolean }
+export interface OutboundResult {
+  ok: boolean; messageId: string; status: string; errorCode?: string; errorMessage?: string; deduplicated?: boolean;
+  /** Failures only: whether waiting and trying again could succeed (false for credential, window, template... problems). */
+  retryable?: boolean;
+}
 
 @Injectable()
 export class OutboundService {
@@ -55,6 +69,15 @@ export class OutboundService {
         if (t.providerStatus !== 'approved') throw new BadRequestException({ code: 'template_not_approved', message: `Template "${t.name}" is ${t.providerStatus}; only provider-approved templates can be sent` });
         const expected = (t.variableSchema as string[]).length;
         if (payload.variables.length !== expected || payload.variables.some((v) => !v.trim())) throw new BadRequestException({ code: 'template_variables', message: `Template needs ${expected} non-empty variable(s)` });
+        // Rich parts: never send a template without the media header or dynamic values it was approved with.
+        if (t.spec) {
+          const c = compile(t.spec as unknown as TemplateSpec);
+          const x = payload.extra;
+          if ((c.header.type === 'image' || c.header.type === 'document') && !x?.header) throw new BadRequestException({ code: 'template_media_required', message: `Template "${t.name}" has a ${c.header.type} header: attach it before sending` });
+          if (c.header.variable && !x?.headerText?.trim()) throw new BadRequestException({ code: 'template_variables', message: `Template "${t.name}" needs a value for its header` });
+          const dynamic = c.buttons.filter((b) => b.urlVariable).length;
+          if (dynamic !== (x?.buttons?.length ?? 0) || x?.buttons?.some((b) => !b.value.trim())) throw new BadRequestException({ code: 'template_variables', message: `Template "${t.name}" needs ${dynamic} button link value(s)` });
+        }
         template = t;
       } else {
         // Free-form messages are only allowed inside the 24h customer-service window.
@@ -66,23 +89,32 @@ export class OutboundService {
       const msg = await tx.message.create({
         data: {
           agencyId, conversationId, direction: 'outbound', type: payload.kind, text, status: 'queued', simulated: this.wa.simulated, sentByUserId: opts.userId,
-          idempotencyKey: opts.idempotencyKey, mediaAssetId: payload.kind === 'document' || payload.kind === 'image' ? payload.assetId : null,
+          idempotencyKey: opts.idempotencyKey, mediaAssetId: payload.kind === 'document' || payload.kind === 'image' ? payload.assetId : payload.kind === 'template' ? payload.extra?.header?.assetId ?? null : null,
           templateId: payload.kind === 'template' ? payload.templateId : null,
         },
       });
       const asset = payload.kind === 'document' || payload.kind === 'image' ? await tx.asset.findFirst({ where: { id: payload.assetId, agencyId } }) : null;
       if ((payload.kind === 'document' || payload.kind === 'image') && !asset) throw new NotFoundException({ code: 'not_found', message: 'Attachment not found' });
-      return { dedup: null, msg, customer, account, asset, template };
+      const hdr = payload.kind === 'template' ? payload.extra?.header : undefined;
+      const headerAsset = hdr ? await tx.asset.findFirst({ where: { id: hdr.assetId, agencyId } }) : null;
+      if (hdr && !headerAsset) throw new NotFoundException({ code: 'not_found', message: 'Header media not found' });
+      return { dedup: null, msg, customer, account, asset, template, headerAsset };
     });
 
     if (ctx.dedup) return { ok: true, messageId: ctx.dedup.id, status: ctx.dedup.status, deduplicated: true };
-    const { msg, customer, account, asset, template } = ctx as unknown as Prepared;
+    const { msg, customer, account, asset, template, headerAsset } = ctx as unknown as Prepared;
 
     const acct: WaAccount = { phoneNumberId: account.phoneNumberId, token: account.credentialSecretRef ? decryptSecret(account.credentialSecretRef) : undefined };
     try {
       let r;
       if (payload.kind === 'text') r = await this.wa.sendText(acct, customer.phoneE164, payload.text);
-      else if (payload.kind === 'template') r = await this.wa.sendTemplate(acct, customer.phoneE164, { name: template!.name, language: template!.language, variables: payload.variables });
+      else if (payload.kind === 'template') {
+        const hdr = payload.extra?.header;
+        r = await this.wa.sendTemplate(acct, customer.phoneE164, {
+          name: template!.name, language: template!.language, variables: payload.variables, headerText: payload.extra?.headerText, buttons: payload.extra?.buttons,
+          header: hdr && headerAsset ? { kind: hdr.kind, data: await this.storage.get(headerAsset.storageKey), mimeType: headerAsset.mimeType, filename: hdr.filename } : undefined,
+        });
+      }
       else {
         const data = await this.storage.get(asset!.storageKey);
         r = payload.kind === 'document'
@@ -100,7 +132,7 @@ export class OutboundService {
       await this.db.tenant(agencyId, (tx) => tx.message.update({ where: { id: msg.id }, data: { status: 'failed', errorCode: err.code, errorMessage: reason } }));
       // A revoked token or an account-level problem affects every send: surface it on the connection, not just this message.
       if (err.kind === 'auth' || err.kind === 'account') await this.accounts.recordFailure(agencyId, err).catch(() => undefined);
-      return { ok: false, messageId: msg.id, status: 'failed', errorCode: err.code, errorMessage: reason };
+      return { ok: false, messageId: msg.id, status: 'failed', errorCode: err.code, errorMessage: reason, retryable: isRetryableFailure(err.retryable, err.kind) };
     }
   }
 }

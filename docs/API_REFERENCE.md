@@ -58,7 +58,7 @@ Base URL (local): `http://localhost:4100`. The web app calls the API through its
 | POST | `/agency/whatsapp/connect` | simulator: `{displayName}`; cloud: also `wabaId`, `phoneNumberId`, `accessToken`. Cloud mode verifies the token, subscribes the webhook, then stores the token encrypted; any failure stores nothing. `409` if the number or WABA belongs to another agency. |
 | POST | `/agency/whatsapp/refresh` | re-check the number's health now; returns the connection view |
 | POST | `/agency/whatsapp/disconnect` | erases the stored credential; sends blocked, incoming events ignored |
-| GET (any) / POST | `/agency/whatsapp/templates` | local drafts; variable count validated; list includes `rejectedReason`, `providerTemplateId` |
+| GET / POST / PATCH / DELETE | `/agency/whatsapp/templates[/:id]` | rich template builder (named variables, header media, buttons); see `WHATSAPP_TEMPLATES.md` for the full set including preview, duplicate, media upload, `send-template` and the public quote link |
 | POST | `/agency/whatsapp/templates/sync` | pull all templates and statuses from the provider |
 | POST | `/agency/whatsapp/templates/:id/submit` | submit a draft or rejected template to Meta (simulator: marks `submitted`); stores the provider's status, never "approved" |
 

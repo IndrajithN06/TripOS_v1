@@ -42,7 +42,7 @@ export interface WhatsAppProvider {
   sendText(a: WaAccount, to: string, text: string): Promise<WaSendResult>;
   sendDocument(a: WaAccount, to: string, f: { filename: string; data: Buffer; mimeType: string; caption?: string }): Promise<WaSendResult>;
   sendImage(a: WaAccount, to: string, f: { data: Buffer; mimeType: string; caption?: string }): Promise<WaSendResult>;
-  sendTemplate(a: WaAccount, to: string, t: { name: string; language: string; variables: string[] }): Promise<WaSendResult>;
+  sendTemplate(a: WaAccount, to: string, t: TemplateSend): Promise<WaSendResult>;
   downloadMedia(a: WaAccount, mediaId: string): Promise<{ data: Buffer; mimeType: string }>;
   verifySignature(rawBody: Buffer, signatureHeader: string | undefined): boolean;
   parseWebhook(body: any): WaEvent[];
@@ -51,8 +51,24 @@ export interface WhatsAppProvider {
   /** Subscribes the platform app to this WABA's webhooks. Idempotent. */
   subscribeWebhooks(a: WaAccount): Promise<void>;
   listTemplates(a: WaAccount): Promise<WaRemoteTemplate[]>;
-  /** Submits a template for review; returns the provider's id and initial status. */
-  submitTemplate(a: WaAccount, t: { name: string; language: string; category: string; body: string; variables: string[] }): Promise<{ providerTemplateId: string; status: string }>;
+  /** Submits a template for review with its full component definition; returns the provider's id and initial status. */
+  submitTemplate(a: WaAccount, t: { name: string; language: string; category: string; components: Record<string, unknown>[] }): Promise<{ providerTemplateId: string; status: string }>;
+  /** Uploads an example file for an image/document template header; returns the handle to put in the template definition. */
+  uploadTemplateExample(a: WaAccount, f: { data: Buffer; mimeType: string; filename: string }): Promise<string>;
+}
+
+/** Everything needed to send one template message, in the provider-neutral form TripOS uses. */
+export interface TemplateSend {
+  name: string;
+  language: string;
+  /** Body parameters in positional order. */
+  variables: string[];
+  /** Value for the single variable of a text header. */
+  headerText?: string;
+  /** Media for an image/document header on this send. */
+  header?: { kind: 'image' | 'document'; data: Buffer; mimeType: string; filename?: string };
+  /** Values for dynamic URL buttons (the part appended to the template's base URL). */
+  buttons?: { index: number; kind: 'url'; value: string }[];
 }
 
 export const WHATSAPP = Symbol('WHATSAPP');
@@ -97,10 +113,11 @@ export class SimulatorWhatsApp implements WhatsAppProvider {
   /** Templates "created in Meta's manager" for sync testing. */
   readonly remoteTemplates: WaRemoteTemplate[] = [];
   async listTemplates() { return this.remoteTemplates; }
-  async submitTemplate(_a: WaAccount, t: { name: string; language: string; category: string; body: string }) {
+  async submitTemplate(_a: WaAccount, t: { name: string; language: string; category: string; components: Record<string, unknown>[] }) {
     const providerTemplateId = `sim-tpl-${t.name}-${t.language}`;
     return { providerTemplateId, status: 'PENDING' };
   }
+  async uploadTemplateExample(_a: WaAccount, f: { filename: string }) { return `sim-handle-${f.filename}`; }
 }
 
 // ----------------------------------------------------------------------------------------------
@@ -153,11 +170,17 @@ export class CloudWhatsApp implements WhatsAppProvider {
     const id = await this.upload(a, f.data, f.mimeType, 'image');
     return this.json(a, to, { type: 'image', image: { id, caption: f.caption } });
   }
-  sendTemplate(a: WaAccount, to: string, t: { name: string; language: string; variables: string[] }) {
-    return this.json(a, to, {
-      type: 'template',
-      template: { name: t.name, language: { code: t.language }, components: t.variables.length ? [{ type: 'body', parameters: t.variables.map((v) => ({ type: 'text', text: v })) }] : [] },
-    });
+  async sendTemplate(a: WaAccount, to: string, t: TemplateSend) {
+    const components: Record<string, unknown>[] = [];
+    if (t.header) {
+      const id = await this.upload(a, t.header.data, t.header.mimeType, t.header.filename ?? t.header.kind);
+      components.push({ type: 'header', parameters: [t.header.kind === 'document' ? { type: 'document', document: { id, filename: t.header.filename ?? 'quotation.pdf' } } : { type: 'image', image: { id } }] });
+    } else if (t.headerText !== undefined) {
+      components.push({ type: 'header', parameters: [{ type: 'text', text: t.headerText }] });
+    }
+    if (t.variables.length) components.push({ type: 'body', parameters: t.variables.map((v) => ({ type: 'text', text: v })) });
+    for (const b of t.buttons ?? []) components.push({ type: 'button', sub_type: 'url', index: String(b.index), parameters: [{ type: 'text', text: b.value }] });
+    return this.json(a, to, { type: 'template', template: { name: t.name, language: { code: t.language }, components } });
   }
   async downloadMedia(a: WaAccount, mediaId: string) {
     const meta = await this.graph(a, mediaId);
@@ -194,15 +217,27 @@ export class CloudWhatsApp implements WhatsAppProvider {
     return out;
   }
 
-  async submitTemplate(a: WaAccount, t: { name: string; language: string; category: string; body: string; variables: string[] }) {
+  async submitTemplate(a: WaAccount, t: { name: string; language: string; category: string; components: Record<string, unknown>[] }) {
     if (!a.wabaId) throw new WaSendError('WABA ID is required to submit templates', 'no_waba', false, 'account');
-    const bodyComponent: Record<string, unknown> = { type: 'BODY', text: t.body };
-    if (t.variables.length) bodyComponent.example = { body_text: [t.variables.map((v) => `Example ${v}`)] };
     const j = await this.graph(a, `${a.wabaId}/message_templates`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: t.name, language: t.language, category: t.category, components: [bodyComponent] }),
+      body: JSON.stringify({ name: t.name, language: t.language, category: t.category, components: t.components }),
     });
     return { providerTemplateId: String(j.id), status: String(j.status ?? 'PENDING') };
+  }
+
+  /**
+   * Meta's Resumable Upload API: create an upload session on the APP (not the WABA), then send the bytes.
+   * The returned handle goes into the template's `example.header_handle`. Needs WHATSAPP_APP_ID.
+   */
+  async uploadTemplateExample(a: WaAccount, f: { data: Buffer; mimeType: string; filename: string }) {
+    const appId = config().WHATSAPP_APP_ID;
+    if (!appId) throw new WaSendError('WHATSAPP_APP_ID must be set in the API environment to submit templates with an image or document header', 'no_app_id', false, 'account');
+    const qs = new URLSearchParams({ file_name: f.filename, file_length: String(f.data.length), file_type: f.mimeType });
+    const session = await this.graph(a, `${appId}/uploads?${qs}`, { method: 'POST' });
+    const done = await this.graph(a, String(session.id), { method: 'POST', headers: { Authorization: `OAuth ${a.token}`, file_offset: '0' }, body: new Uint8Array(f.data) });
+    if (!done?.h) throw new WaSendError('Meta did not return an upload handle', 'no_handle', false, 'unknown');
+    return String(done.h);
   }
   verifySignature(rawBody: Buffer, header: string | undefined) {
     const secret = config().WHATSAPP_APP_SECRET;

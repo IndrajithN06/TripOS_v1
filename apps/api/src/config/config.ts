@@ -10,6 +10,8 @@ const bool = z.enum(['true', 'false']).default('false').transform((v) => v === '
 const schema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   APP_URL: z.string().url().default('http://localhost:3100'),
+  /** Public address of the customer quotation page (/q/<token>) used in WhatsApp links and URL buttons. Defaults to APP_URL. */
+  PUBLIC_QUOTE_BASE_URL: z.string().url().optional(),
   API_URL: z.string().url().default('http://localhost:4100'),
   PORT: z.coerce.number().default(4100),
   LOG_LEVEL: z.enum(['debug', 'info', 'warn', 'error']).default('info'),
@@ -68,6 +70,7 @@ export function validateConfig(env: Record<string, string | undefined>): AppConf
     if (/tripos_app_dev_only|tripos_dev_only/.test(c.DATABASE_URL)) problems.push('DATABASE_URL uses development credentials');
     if (!c.APP_URL.startsWith('https://')) problems.push('APP_URL must be https in production');
     if (!c.API_URL.startsWith('https://')) problems.push('API_URL must be https in production');
+    if (c.PUBLIC_QUOTE_BASE_URL && !c.PUBLIC_QUOTE_BASE_URL.startsWith('https://')) problems.push('PUBLIC_QUOTE_BASE_URL must be https in production (WhatsApp links and URL buttons)');
     if (c.STORAGE_PROVIDER !== 's3') problems.push('STORAGE_PROVIDER must be "s3" in production (local disk storage is development-only)');
     if (c.STORAGE_PROVIDER === 's3') {
       for (const k of ['STORAGE_BUCKET', 'STORAGE_REGION', 'STORAGE_ACCESS_KEY_ID', 'STORAGE_SECRET_ACCESS_KEY'] as const) if (!c[k]) problems.push(`${k} is required for s3 storage`);
