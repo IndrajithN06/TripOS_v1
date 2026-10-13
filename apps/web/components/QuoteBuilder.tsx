@@ -4,6 +4,7 @@ import { api, useApi } from '@/lib/api';
 import { fmtDateTime, inr, isoToZoned, zonedToIso } from '@/lib/format';
 import { Field, Modal, SimTag, StatusBadge, errMsg, useAction, useMe } from './ui';
 import { QuotePreview } from './QuotePreview';
+import { SendQuoteModal } from './SendQuoteModal';
 import { defaultPhotoSelection, sanitizeSelection, selectionSummary, toggleSelection } from '@/lib/photos';
 
 type Charge = { label: string; amount: string; taxable: boolean };
@@ -45,7 +46,9 @@ export function QuoteBuilder({ conversationId, customerId, quoteId, prefill, onC
   const [preview, setPreview] = useState<any>(null), [sendResult, setSendResult] = useState<any>(null), [busy, setBusy] = useState(false);
   const [noPhotoPrompt, setNoPhotoPrompt] = useState(false);
   const photoSection = useRef<HTMLElement>(null);
+  const promptMode = useRef<'template' | 'plain'>('template');
   const [followUp, setFollowUp] = useState('');
+  const [sendModal, setSendModal] = useState<{ quoteId: string; versionNumber: number } | null>(null);
   const set = <K extends keyof Form>(k: K, v: Form[K]) => setForm((f) => ({ ...f, [k]: v }));
 
   const load = useCallback(async (id: string) => {
@@ -110,6 +113,7 @@ export function QuoteBuilder({ conversationId, customerId, quoteId, prefill, onC
   async function doSend(skipPhotoCheck = false) {
     // Staff must not send a quote without photos by accident when the vehicle has some: ask first.
     if (photos.needsWarning && !skipPhotoCheck) {
+      promptMode.current = 'plain';
       setNoPhotoPrompt(true);
       photoSection.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
       return;
@@ -122,6 +126,15 @@ export function QuoteBuilder({ conversationId, customerId, quoteId, prefill, onC
       const r = await run(() => api(`/quotes/${q.id}/versions/${cur.versionNumber}/send`, { body: { followUpAt: followUp ? zonedToIso(followUp, tz) : null } }));
       if (r) { setSendResult(r); await load(q.id); onChanged?.(); }
     }
+    setBusy(false);
+  }
+  /** Saves the form, then opens the template send dialog for the saved current version. */
+  async function openTemplateSend(skipPhotoCheck = false) {
+    if (photos.needsWarning && !skipPhotoCheck) { promptMode.current = 'template'; setNoPhotoPrompt(true); photoSection.current?.scrollIntoView({ behavior: 'smooth', block: 'center' }); return; }
+    setNoPhotoPrompt(false);
+    setBusy(true);
+    const q = await save();
+    if (q) { const cur = q.versions.find((v: any) => v.id === q.currentVersionId); await load(q.id); setSendModal({ quoteId: q.id, versionNumber: cur.versionNumber }); }
     setBusy(false);
   }
   async function retry() {
@@ -268,11 +281,12 @@ export function QuoteBuilder({ conversationId, customerId, quoteId, prefill, onC
                 <div><strong>Send without photos?</strong> This vehicle has {photos.total} photo{photos.total === 1 ? '' : 's'}, but none are selected.</div>
                 <div className="row">
                   <button className="btn sm primary" onClick={() => { set('imageAssetIds', defaultPhotoSelection(vehicle)); setNoPhotoPrompt(false); }}>Select the primary photo</button>
-                  <button className="btn sm" onClick={() => doSend(true)}>Send without photos</button>
+                  <button className="btn sm" onClick={() => void (promptMode.current === 'template' ? openTemplateSend(true) : doSend(true))}>Send without photos</button>
                 </div>
               </div>
             )}
-            <button className="btn primary" disabled={busy || !calc} onClick={() => void doSend()}>{locked ? `Save v${current.versionNumber + 1} & send via WhatsApp` : 'Send via WhatsApp'}</button>
+            <button className="btn primary" disabled={busy || !calc} onClick={() => void openTemplateSend()}>{locked ? `Save v${current.versionNumber + 1} & send quotation on WhatsApp` : 'Send Quotation on WhatsApp'}</button>
+            <button className="btn" disabled={busy || !calc} title="Plain text, PDF and photos. WhatsApp allows this only within 24 hours of the customer's last message." onClick={() => void doSend()}>{locked ? `Save v${current.versionNumber + 1} & send as plain messages` : 'Send as plain messages (24h window)'}</button>
             <button className="btn" disabled={busy || !form.vehicleTypeId} onClick={() => save()}>{locked ? 'Create new version (draft)' : 'Save draft'}</button>
             {me.environment.whatsappSimulated && <div className="small"><SimTag /> Sends go to the local simulator only.</div>}
           </section>
@@ -282,7 +296,7 @@ export function QuoteBuilder({ conversationId, customerId, quoteId, prefill, onC
               <h2>Delivery</h2>
               <div className="row"><StatusBadge s={sendResult.versionStatus} /><span className="small muted">version {sendResult.versionNumber}</span></div>
               {sendResult.attempts.map((a: any, i: number) => (
-                <div className="row between small" key={i}><span>{a.kind === 'text' ? 'Message' : a.kind === 'pdf' ? 'Quotation PDF' : `Photo ${i - 1}`}</span><span><StatusBadge s={a.status} /></span></div>
+                <div className="row between small" key={i}><span>{a.kind === 'template' ? 'WhatsApp template message' : a.kind === 'text' ? 'Message' : a.kind === 'pdf' ? 'Quotation PDF' : 'Vehicle photo'}</span><span><StatusBadge s={a.status} /></span></div>
               ))}
               {sendResult.attempts.some((a: any) => a.error) && <div className="banner err small">{sendResult.attempts.find((a: any) => a.error)?.error}</div>}
               {sendResult.versionStatus !== 'sent' && <button className="btn blue" onClick={retry}>Retry failed items only</button>}
@@ -293,6 +307,7 @@ export function QuoteBuilder({ conversationId, customerId, quoteId, prefill, onC
           )}
         </div>
       </div>
+      {sendModal && <SendQuoteModal quoteId={sendModal.quoteId} versionNumber={sendModal.versionNumber} onClose={() => setSendModal(null)} onSent={() => { void load(sendModal.quoteId); onChanged?.(); }} />}
       {preview && <Modal title="Customer preview" onClose={() => setPreview(null)}>
         <QuotePreview p={preview} />
         <div className="row" style={{ marginTop: 12 }}><a className="btn" target="_blank" rel="noreferrer" href={`/api/quotes/${quote.id}/versions/${preview.versionNumber}/pdf`}>Open PDF</a></div>

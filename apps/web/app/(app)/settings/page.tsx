@@ -2,9 +2,10 @@
 import { useState } from 'react';
 import { api, useApi } from '@/lib/api';
 import { fmtDateTime, inr } from '@/lib/format';
-import { Empty, ErrorBox, Field, Loading, SimTag, StatusBadge, useAction, useMe, useRefreshMe } from '@/components/ui';
+import { TemplateManager } from '@/components/TemplateBuilder';
+import { ErrorBox, Field, Loading, SimTag, StatusBadge, useAction, useMe, useRefreshMe } from '@/components/ui';
 
-const TABS = [['branding', 'Profile & branding'], ['team', 'Team'], ['whatsapp', 'WhatsApp'], ['templates', 'Templates'], ['quotes', 'Quotes, tax & AI'], ['audit', 'Audit log']];
+const TABS = [['branding', 'Profile & branding'], ['team', 'Team'], ['whatsapp', 'WhatsApp'], ['templates', 'WhatsApp Templates'], ['quotes', 'Quotes, tax & AI'], ['audit', 'Audit log']];
 
 export default function Settings() {
   const [tab, setTab] = useState('branding');
@@ -136,35 +137,7 @@ function WhatsApp() {
   );
 }
 
-function Templates() {
-  const me = useMe(), run = useAction();
-  const { data, error, reload } = useApi<any[]>('/agency/whatsapp/templates');
-  const [f, setF] = useState({ name: '', body: '', vars: '' });
-  return (
-    <div className="stack">
-      <ErrorBox e={error} retry={reload} />
-      <div className="banner ok small row between"><span>Status is whatever the provider reports. A template is never treated as approved until the provider confirms it.</span>
-        <button className="btn sm" onClick={() => run(async () => { const r = await api('/agency/whatsapp/templates/sync', { body: {} }); return r; }, 'Templates synced from WhatsApp').then(reload)}>{me.environment.whatsappSimulated ? 'Sync (simulated)' : 'Sync from Meta'}</button></div>
-      <div className="card stack">
-        <h2>New template draft</h2>
-        <div className="fields"><Field label="Name (lowercase_underscores)"><input value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} /></Field><Field label="Variable names, comma separated"><input value={f.vars} onChange={(e) => setF({ ...f, vars: e.target.value })} placeholder="customer_name, quote_number" /></Field></div>
-        <Field label="Body (use {{1}}, {{2}} …)"><textarea value={f.body} onChange={(e) => setF({ ...f, body: e.target.value })} /></Field>
-        <div><button className="btn primary" onClick={() => run(() => api('/agency/whatsapp/templates', { body: { name: f.name, body: f.body, variableSchema: f.vars.split(',').map((s) => s.trim()).filter(Boolean) } }), 'Draft saved').then(() => { setF({ name: '', body: '', vars: '' }); reload(); })}>Save draft</button></div>
-      </div>
-      <div className="card table-wrap">
-        {data?.length === 0 ? <Empty>No templates.</Empty> : (
-          <table><thead><tr><th>Name</th><th>Body</th><th>Provider status</th><th /></tr></thead><tbody>{data?.map((t) => (
-            <tr key={t.id}><td>{t.name}<div className="small muted">{t.language} · {t.category}</div></td><td className="small">{t.body}</td>
-              <td><StatusBadge s={t.providerStatus} />{t.rejectedReason && <div className="small" style={{ color: 'var(--red)' }}>{t.rejectedReason}</div>}</td>
-              <td><div className="row">
-                {['local_draft', 'rejected'].includes(t.providerStatus) && <button className="btn sm" onClick={() => run(() => api(`/agency/whatsapp/templates/${t.id}/submit`, { body: {} }), 'Submitted').then(reload)}>{t.providerStatus === 'rejected' ? 'Resubmit' : 'Submit for approval'}</button>}
-                {me.environment.whatsappSimulated && ['submitted', 'pending'].includes(t.providerStatus) && <><SimTag /><button className="btn sm" onClick={() => run(() => api('/dev/simulator/template-decision', { body: { templateId: t.id, status: 'approved' } })).then(reload)}>Simulate approve</button><button className="btn sm" onClick={() => run(() => api('/dev/simulator/template-decision', { body: { templateId: t.id, status: 'rejected' } })).then(reload)}>Simulate reject</button></>}
-              </div></td></tr>))}</tbody></table>
-        )}
-      </div>
-    </div>
-  );
-}
+function Templates() { return <TemplateManager />; }
 
 function QuoteSettings() {
   const run = useAction();
