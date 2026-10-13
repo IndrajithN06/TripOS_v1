@@ -13,4 +13,10 @@ export default async function setup() {
     stdio: 'pipe', cwd: __dirname + '/..',
     env: { ...process.env, DATABASE_URL: 'postgresql://tripos_app:tripos_app_dev_only@localhost:5442/tripos_test', DATABASE_MIGRATE_URL: 'postgresql://tripos:tripos_dev_only@localhost:5442/tripos_test' },
   });
+  // Start every run with an empty job queue: queued jobs left behind by earlier runs (this is a throwaway database)
+  // would otherwise be picked up by the worker tick that some tests drive and make timing-dependent assertions flaky.
+  const db = new Client({ connectionString: 'postgresql://tripos:tripos_dev_only@localhost:5442/tripos_test' });
+  await db.connect();
+  await db.query(`UPDATE "Job" SET status = 'done' WHERE status IN ('pending', 'running')`);
+  await db.end();
 }
