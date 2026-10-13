@@ -6,6 +6,7 @@ import { Public } from '../../common/auth';
 import { config } from '../../config/config';
 import { Db } from '../../db/db.service';
 import { WaEvent, WHATSAPP, WhatsAppProvider } from '../../providers/whatsapp/whatsapp';
+import { WhatsappAccountService } from '../whatsapp/whatsapp-account.service';
 
 const RANK: Record<string, number> = { queued: 0, submitted: 1, sent: 2, delivered: 3, read: 4 };
 const MEDIA_MIME_ALLOW = /^(image\/(jpeg|png|webp)|application\/pdf|audio\/(ogg|mpeg|mp4|amr|aac))$/;
@@ -14,18 +15,40 @@ const MAX_MEDIA_BYTES = 16 * 1024 * 1024;
 @Injectable()
 export class InboundService {
   private readonly log = new Logger('WhatsAppInbound');
-  constructor(private readonly db: Db, private readonly assets: AssetService, @Inject(WHATSAPP) private readonly wa: WhatsAppProvider) {}
+  constructor(private readonly db: Db, private readonly assets: AssetService, @Inject(WHATSAPP) private readonly wa: WhatsAppProvider, private readonly accounts: WhatsappAccountService) {}
 
   /** The tenant is ALWAYS resolved from the destination phone_number_id, never from payload fields a sender controls. */
   async process(events: WaEvent[]) {
-    let processed = 0, duplicates = 0, unknown = 0;
+    let processed = 0, duplicates = 0, unknown = 0, ignored = 0;
     for (const e of events) {
-      const account = await this.db.system((tx) => tx.whatsappAccount.findUnique({ where: { phoneNumberId: e.phoneNumberId } }));
-      if (!account) { unknown++; this.log.warn(`Event for unknown phone_number_id ${e.phoneNumberId} ignored`); continue; }
+      // Account-level events (templates, quality) identify the WABA, not the phone number.
+      const account = await this.db.system((tx) => (e.kind === 'message' || e.kind === 'status'
+        ? tx.whatsappAccount.findUnique({ where: { phoneNumberId: e.phoneNumberId } })
+        : e.wabaId ? tx.whatsappAccount.findFirst({ where: { wabaId: e.wabaId } }) : Promise.resolve(null)));
+      if (!account) { unknown++; this.log.warn(`Event for unknown WhatsApp account (${e.kind}) ignored`); continue; }
+      if (account.connectionStatus === 'disconnected') { ignored++; continue; }
+      await this.accounts.touchWebhook(account.agencyId, account.id).catch(() => undefined);
+
+      if (e.kind === 'template' || e.kind === 'account') {
+        const key = e.kind === 'template' ? `tpl:${e.providerTemplateId}:${e.event}:${e.timestamp.getTime()}` : `acct:${e.event}:${e.timestamp.getTime()}`;
+        if (!(await this.firstTime(account.agencyId, key))) { duplicates++; continue; }
+        if (e.kind === 'template') await this.accounts.applyTemplateEvent(account.agencyId, e);
+        else await this.accounts.applyAccountEvent(account.agencyId, e);
+        processed++;
+        continue;
+      }
       const res = e.kind === 'message' ? await this.inbound(account.agencyId, e, account.credentialSecretRef) : await this.status(account.agencyId, e);
       if (res === 'duplicate') duplicates++; else processed++;
     }
-    return { processed, duplicates, unknown };
+    return { processed, duplicates, unknown, ignored };
+  }
+
+  /** True the first time an event key is seen for this agency (webhook retries are acknowledged but not re-applied). */
+  private firstTime(agencyId: string, eventKey: string) {
+    return this.db.tenant(agencyId, async (tx) => {
+      try { await tx.webhookEvent.create({ data: { agencyId, eventKey } }); return true; }
+      catch (err: any) { if (err.code === 'P2002') return false; throw err; }
+    });
   }
 
   private async inbound(agencyId: string, e: Extract<WaEvent, { kind: 'message' }>, credRef: string | null) {

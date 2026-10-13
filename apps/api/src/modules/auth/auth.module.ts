@@ -131,7 +131,8 @@ export class AuthController {
       ? await this.db.tenant(p.agencyId, async (tx) => {
           const [a, b] = await Promise.all([tx.agency.findUnique({ where: { id: p.agencyId! } }), tx.agencyBranding.findUnique({ where: { agencyId: p.agencyId! } })]);
           const logo = b?.logoAssetId ? await tx.asset.findUnique({ where: { id: b.logoAssetId } }) : null;
-          return a && { id: a.id, name: a.name, status: a.status, timezone: a.timezone, currency: a.currency, brandColour: b?.brandColour ?? '#157f58', logoUrl: logo ? await this.storage.signedUrl(logo.storageKey) : null, salesVisibility: a.salesVisibility };
+          const wacc = await tx.whatsappAccount.findFirst({ where: { agencyId: p.agencyId! } });
+          return a && { whatsapp: wacc ? { status: wacc.connectionStatus, reason: wacc.statusReason, simulated: wacc.mode === 'simulator' } : null, id: a.id, name: a.name, status: a.status, timezone: a.timezone, currency: a.currency, brandColour: b?.brandColour ?? '#157f58', logoUrl: logo ? await this.storage.signedUrl(logo.storageKey) : null, salesVisibility: a.salesVisibility };
         })
       : null;
     return {

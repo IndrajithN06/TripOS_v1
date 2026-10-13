@@ -82,6 +82,11 @@ export function validateConfig(env: Record<string, string | undefined>): AppConf
     if (c.EMAIL_PROVIDER === 'resend' && !c.EMAIL_API_KEY) problems.push('EMAIL_API_KEY is required when EMAIL_PROVIDER=resend');
   }
   if (c.AI_PROVIDER === 'openai' && !c.AI_API_KEY) problems.push('AI_API_KEY is required when AI_PROVIDER=openai');
+  // Outside production the check above does not run; without these two the webhook would fail silently
+  // (every Meta delivery rejected as unsigned, and the verification handshake refused).
+  if (c.NODE_ENV !== 'production' && c.WHATSAPP_PROVIDER === 'cloud') {
+    for (const k of ['WHATSAPP_APP_SECRET', 'WHATSAPP_VERIFY_TOKEN'] as const) if (!c[k]) problems.push(`${k} is required when WHATSAPP_PROVIDER=cloud (set it in apps/api/.env)`);
+  }
   if (problems.length) throw new Error('Unsafe or incomplete configuration:\n' + problems.map((p) => `  - ${p}`).join('\n'));
   return { ...c, isProd: c.NODE_ENV === 'production' };
 }

@@ -11,6 +11,7 @@ import { config } from '../../config/config';
 import { Db } from '../../db/db.service';
 import { WHATSAPP, WhatsAppProvider } from '../../providers/whatsapp/whatsapp';
 import { InviteService } from '../auth/auth.module';
+import { WhatsappAccountService } from '../whatsapp/whatsapp-account.service';
 
 const hex = z.string().regex(/^#[0-9a-fA-F]{6}$/, 'Use a 6-digit hex colour');
 const brandingSchema = z.object({
@@ -28,7 +29,7 @@ const settingsSchema = z.object({
 @Roles('AGENCY_ADMIN')
 @Controller('agency')
 export class AgencyController {
-  constructor(private readonly db: Db, private readonly invites: InviteService, private readonly assets: AssetService, @Inject(WHATSAPP) private readonly wa: WhatsAppProvider) {}
+  constructor(private readonly db: Db, private readonly invites: InviteService, private readonly assets: AssetService, @Inject(WHATSAPP) private readonly wa: WhatsAppProvider, private readonly accounts: WhatsappAccountService) {}
 
   // ---- users ----
   @Get('users')
@@ -156,23 +157,34 @@ export class AgencyController {
   @Get('whatsapp')
   async whatsapp(@CurrentUser() p: Principal) {
     const a = await this.db.tenant(agencyOf(p), (tx) => tx.whatsappAccount.findFirst({ where: { agencyId: p.agencyId! } }));
-    return a ? { connected: true, mode: a.mode, phoneNumberId: a.phoneNumberId, wabaId: a.wabaId, displayName: a.displayName, connectionStatus: a.connectionStatus, webhookSubscribed: a.webhookSubscribed, hasCredential: !!a.credentialSecretRef, simulated: a.mode === 'simulator' } : { connected: false, providerMode: this.wa.name };
+    return a ? this.statusView(a) : { connected: false, providerMode: this.wa.name };
+  }
+
+  /** Never includes the credential itself, only whether one is stored. */
+  private statusView(a: any) {
+    return {
+      connected: a.connectionStatus !== 'disconnected', mode: a.mode, simulated: a.mode === 'simulator', phoneNumberId: a.phoneNumberId, wabaId: a.wabaId, displayName: a.displayName,
+      connectionStatus: a.connectionStatus, statusReason: a.statusReason, webhookSubscribed: a.webhookSubscribed, hasCredential: !!a.credentialSecretRef,
+      displayPhoneNumber: a.displayPhoneNumber, verifiedName: a.verifiedName, displayNameStatus: a.displayNameStatus, qualityRating: a.qualityRating, messagingLimitTier: a.messagingLimitTier,
+      subscribedAt: a.subscribedAt, lastWebhookAt: a.lastWebhookAt, lastCheckedAt: a.lastCheckedAt, lastErrorCode: a.lastErrorCode, lastErrorAt: a.lastErrorAt,
+    };
   }
 
   @Post('whatsapp/connect')
   async connectWhatsapp(@CurrentUser() p: Principal, @Body() body: unknown) {
-    const b = parse(z.object({ displayName: z.string().min(2).max(80), wabaId: z.string().optional(), phoneNumberId: z.string().optional(), accessToken: z.string().min(10).optional() }), body);
-    const agencyId = agencyOf(p);
-    const cloud = this.wa.name === 'cloud';
-    if (cloud && (!b.phoneNumberId || !b.wabaId || !b.accessToken)) throw new BadRequestException({ code: 'missing_fields', message: 'WABA ID, phone number ID and access token are required (complete Meta Embedded Signup first)' });
-    return this.db.tenant(agencyId, async (tx) => {
-      const phoneNumberId = cloud ? b.phoneNumberId! : `sim-${agencyId.slice(0, 8)}`;
-      const data = { mode: cloud ? 'cloud' : 'simulator', wabaId: b.wabaId ?? null, phoneNumberId, displayName: b.displayName, credentialSecretRef: b.accessToken ? encryptSecret(b.accessToken) : null, connectionStatus: 'connected', webhookSubscribed: !cloud };
-      const acc = await tx.whatsappAccount.upsert({ where: { agencyId }, create: { agencyId, ...data }, update: data });
-      await audit(tx, { agencyId, actorUserId: p.userId, action: 'whatsapp.connected', entityType: 'whatsapp_account', entityId: acc.id, metadata: { mode: acc.mode, phoneNumberId } });
-      return { connected: true, mode: acc.mode, phoneNumberId };
-    });
+    const b = parse(z.object({ displayName: z.string().trim().min(2).max(80), wabaId: z.string().trim().optional(), phoneNumberId: z.string().trim().optional(), accessToken: z.string().trim().min(10).optional() }), body);
+    return this.statusView(await this.accounts.connect(agencyOf(p), p.userId, b));
   }
+
+  /** Re-check the number's health with the provider right now. */
+  @Post('whatsapp/refresh')
+  async refreshWhatsapp(@CurrentUser() p: Principal) { return this.statusView(await this.accounts.refreshHealth(agencyOf(p))); }
+
+  @Post('whatsapp/disconnect')
+  disconnectWhatsapp(@CurrentUser() p: Principal) { return this.accounts.disconnect(agencyOf(p), p.userId); }
+
+  @Post('whatsapp/templates/sync')
+  syncTemplates(@CurrentUser() p: Principal) { return this.accounts.syncTemplates(agencyOf(p)); }
 
   // ---- templates ----
   @Roles('AGENCY_ADMIN', 'SALES')
@@ -197,18 +209,9 @@ export class AgencyController {
 
   @Post('whatsapp/templates/:id/submit')
   async submitTemplate(@CurrentUser() p: Principal, @Param('id', ParseUUIDPipe) id: string) {
-    const agencyId = agencyOf(p);
-    return this.db.tenant(agencyId, async (tx) => {
-      const t = await tx.whatsappTemplate.findFirst({ where: { id, agencyId } });
-      if (!t) throw new NotFoundException({ code: 'not_found', message: 'Template not found' });
-      if (this.wa.name === 'cloud') {
-        throw new BadRequestException({ code: 'not_implemented', message: 'Submitting templates to Meta requires live credentials; submit via the Meta template manager and sync status. See docs/PRODUCTION_DEPLOYMENT.md.' });
-      }
-      // Simulator: the template is marked "submitted" — it is NOT approved until a (simulated) provider decision.
-      const u = await tx.whatsappTemplate.update({ where: { id }, data: { providerStatus: 'submitted', providerTemplateId: `sim-tpl-${id.slice(0, 8)}` } });
-      await audit(tx, { agencyId, actorUserId: p.userId, action: 'template.submitted', entityType: 'template', entityId: id });
-      return u;
-    });
+    // Real provider: submitted to Meta for review (status comes back from Meta). Simulator: marked "submitted".
+    // Either way it is NOT approved until the provider says so.
+    return this.accounts.submitTemplate(agencyOf(p), p.userId, id);
   }
 }
 
