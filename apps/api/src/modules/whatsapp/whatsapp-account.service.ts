@@ -26,7 +26,7 @@ export class WhatsappAccountService {
   private readonly log = new Logger('WhatsappAccount');
   constructor(private readonly db: Db, @Inject(WHATSAPP) private readonly wa: WhatsAppProvider) {}
 
-  private creds(a: { phoneNumberId: string; wabaId: string | null; credentialSecretRef: string | null }): WaAccount {
+  creds(a: { phoneNumberId: string; wabaId: string | null; credentialSecretRef: string | null }): WaAccount {
     return { phoneNumberId: a.phoneNumberId, wabaId: a.wabaId ?? undefined, token: a.credentialSecretRef ? decryptSecret(a.credentialSecretRef) : undefined };
   }
 
@@ -95,7 +95,7 @@ export class WhatsappAccountService {
     });
   }
 
-  private failure(e: unknown, prefix: string) {
+  failure(e: unknown, prefix: string) {
     if (e instanceof WaSendError) {
       return new BadRequestException({ code: e.kind === 'auth' ? 'whatsapp_auth_failed' : 'whatsapp_error', message: `${prefix}: ${e.message}. ${hintForKind(e.kind)}` });
     }
@@ -154,28 +154,7 @@ export class WhatsappAccountService {
 
   // ------------------------------------------------------------------ templates
 
-  async submitTemplate(agencyId: string, actorId: string, templateId: string) {
-    const [account, t] = await Promise.all([
-      this.load(agencyId),
-      this.db.tenant(agencyId, (tx) => tx.whatsappTemplate.findFirst({ where: { id: templateId, agencyId } })),
-    ]);
-    if (!t) throw new NotFoundException({ code: 'not_found', message: 'Template not found' });
-    if (t.providerStatus !== 'local_draft' && t.providerStatus !== 'rejected') throw new BadRequestException({ code: 'already_submitted', message: `This template is already ${t.providerStatus}` });
-    let res: { providerTemplateId: string; status: string };
-    try {
-      res = await this.wa.submitTemplate(this.creds(account), { name: t.name, language: t.language, category: t.category, body: t.body, variables: t.variableSchema as string[] });
-    } catch (e) {
-      if (e instanceof WaSendError && (e.kind === 'auth' || e.kind === 'account')) await this.recordFailure(agencyId, e);
-      throw this.failure(e, 'Meta rejected the template submission');
-    }
-    // Submitted is NOT approved: the provider's own status (normally PENDING) is what we store.
-    const status = mapTemplateStatus(res.status) ?? 'pending';
-    return this.db.tenant(agencyId, async (tx) => {
-      const u = await tx.whatsappTemplate.update({ where: { id: t.id }, data: { providerTemplateId: res.providerTemplateId, providerStatus: this.wa.simulated && status === 'pending' ? 'submitted' : status, rejectedReason: null, lastSyncedAt: new Date() } });
-      await audit(tx, { agencyId, actorUserId: actorId, action: 'template.submitted', entityType: 'template', entityId: t.id, metadata: { providerStatus: u.providerStatus } });
-      return u;
-    });
-  }
+  // Template authoring, submission and previews live in modules/templates/templates.service.ts.
 
   /** Pulls every template from the provider: updates local ones and adds ones created in Meta's own manager. */
   async syncTemplates(agencyId: string) {

@@ -18,8 +18,11 @@ import { OutboundService } from './modules/inbox/outbound.service';
 import { JobsService } from './modules/jobs/jobs.service';
 import { PlatformController, PlatformService } from './modules/platform/platform.module';
 import { QuotesController } from './modules/quotes/quotes.controller';
+import { PublicQuoteController } from './modules/quotes/public-quote.controller';
 import { QuotesService } from './modules/quotes/quotes.service';
 import { VehiclesController } from './modules/vehicles/vehicles.module';
+import { TemplatesController } from './modules/templates/templates.controller';
+import { TemplatesService } from './modules/templates/templates.service';
 import { WhatsappAccountService } from './modules/whatsapp/whatsapp-account.service';
 import { InboundService, WebhooksController } from './modules/webhooks/webhooks.module';
 import { ProvidersModule } from './providers/providers.module';
@@ -49,11 +52,11 @@ class CoreModule {}
     DbModule, ProvidersModule, CoreModule, AuthModule,
   ],
   controllers: [
-    AgencyController, PlatformController, VehiclesController, QuotesController, InboxController, WebhooksController,
+    AgencyController, TemplatesController, PlatformController, VehiclesController, QuotesController, PublicQuoteController, InboxController, WebhooksController,
     DashboardController, AnalyticsController, HealthController, MediaController, DevController,
   ],
   providers: [
-    PlatformService, WhatsappAccountService, QuotesService, OutboundService, InboxService, InboundService, AiService, DashboardService, AnalyticsService, WorkerBootstrap,
+    PlatformService, WhatsappAccountService, TemplatesService, QuotesService, OutboundService, InboxService, InboundService, AiService, DashboardService, AnalyticsService, WorkerBootstrap,
     { provide: APP_GUARD, useClass: ThrottlerGuard },
     { provide: APP_GUARD, useClass: CsrfGuard },
     { provide: APP_GUARD, useClass: AuthGuard },

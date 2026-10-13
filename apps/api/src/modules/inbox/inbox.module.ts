@@ -6,6 +6,8 @@ import { agencyOf, CurrentUser, parse, Principal, Roles } from '../../common/aut
 import { Db, Tx } from '../../db/db.service';
 import { AiService } from '../ai/ai.service';
 import { OutboundService, SERVICE_WINDOW_MS } from './outbound.service';
+import { QuotesService } from '../quotes/quotes.service';
+import { TemplatesService } from '../templates/templates.service';
 
 @Injectable()
 export class InboxService {
@@ -106,13 +108,18 @@ export class InboxService {
 
 const sendSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('text'), text: z.string().min(1).max(4000), idempotencyKey: z.string().max(100).optional() }),
-  z.object({ type: z.literal('template'), templateId: z.string().uuid(), variables: z.array(z.string().max(200)).max(10).default([]), idempotencyKey: z.string().max(100).optional() }),
+  z.object({
+    type: z.literal('template'), templateId: z.string().uuid(), variables: z.array(z.string().max(200)).max(10).default([]), idempotencyKey: z.string().max(100).optional(),
+    // Rich send: named values (override what the quote/customer supplies), the quotation to draw data from, header media and vehicle photos.
+    values: z.record(z.string().max(1000)).optional(), quoteId: z.string().uuid().optional(), versionNumber: z.number().int().min(1).optional(),
+    headerAssetId: z.string().uuid().optional(), photoAssetIds: z.array(z.string().uuid()).max(10).optional(),
+  }),
 ]);
 
 @Roles('AGENCY_ADMIN', 'SALES')
 @Controller('inbox/conversations')
 export class InboxController {
-  constructor(private readonly svc: InboxService, private readonly db: Db, private readonly outbound: OutboundService, private readonly ai: AiService) {}
+  constructor(private readonly svc: InboxService, private readonly db: Db, private readonly outbound: OutboundService, private readonly ai: AiService, private readonly templates: TemplatesService, private readonly quotes: QuotesService) {}
 
   @Get()
   list(@CurrentUser() p: Principal, @Query() q: Record<string, string>) {
@@ -137,8 +144,41 @@ export class InboxController {
   async send(@CurrentUser() p: Principal, @Param('id', ParseUUIDPipe) id: string, @Body() body: unknown) {
     const b = parse(sendSchema, body);
     const agencyId = agencyOf(p);
-    await this.db.tenant(agencyId, (tx) => this.svc.getConversation(tx, p, agencyId, id));
-    return this.outbound.send(agencyId, id, b.type === 'text' ? { kind: 'text', text: b.text } : { kind: 'template', templateId: b.templateId, variables: b.variables }, { userId: p.userId, idempotencyKey: b.idempotencyKey });
+    const conv = await this.db.tenant(agencyId, (tx) => this.svc.getConversation(tx, p, agencyId, id));
+    if (b.type === 'text') return this.outbound.send(agencyId, id, { kind: 'text', text: b.text }, { userId: p.userId, idempotencyKey: b.idempotencyKey });
+    const rich = b.values || b.quoteId || b.headerAssetId || b.photoAssetIds;
+    if (!rich) return this.outbound.send(agencyId, id, { kind: 'template', templateId: b.templateId, variables: b.variables }, { userId: p.userId, idempotencyKey: b.idempotencyKey });
+
+    // Rich template send: resolve every variable and the header media on the server, strictly (nothing is sent with blanks).
+    const prepared = await this.db.tenant(agencyId, async (tx) => {
+      const t = await tx.whatsappTemplate.findFirst({ where: { id: b.templateId, agencyId } });
+      if (!t) throw new NotFoundException({ code: 'not_found', message: 'Template not found' });
+      let versionNumber = b.versionNumber;
+      if (b.quoteId) {
+        const q = await tx.quote.findFirst({ where: { id: b.quoteId, agencyId, customerId: conv.customerId } });
+        if (!q) throw new NotFoundException({ code: 'not_found', message: 'Quote not found for this customer' });
+        const v = versionNumber ? null : await tx.quoteVersion.findFirstOrThrow({ where: { id: q.currentVersionId!, agencyId } });
+        versionNumber ??= v!.versionNumber;
+        // A document header needs the PDF as a stored file.
+        if (this.templates.specOf(t).header.type === 'document') await this.quotes.ensurePdfAsset(tx, agencyId, p.userId, q.id, versionNumber);
+      }
+      if (b.photoAssetIds?.length) {
+        const n = await tx.asset.count({ where: { id: { in: b.photoAssetIds }, agencyId, mimeType: { in: ['image/jpeg', 'image/png'] } } });
+        if (n !== new Set(b.photoAssetIds).size) throw new BadRequestException({ code: 'bad_photo', message: 'One of the selected photos is not available.' });
+      }
+      return this.templates.prepare(tx, agencyId, t, { conversationId: id, quoteId: b.quoteId, versionNumber, overrides: b.values, headerAssetId: b.headerAssetId, useSnapshot: !!b.quoteId });
+    });
+    const result = await this.outbound.send(agencyId, id, { kind: 'template', templateId: b.templateId, variables: prepared.variables, extra: prepared.extra }, { userId: p.userId, idempotencyKey: b.idempotencyKey });
+    // Vehicle photos are free-form messages: only possible while the 24 h window is open, and only after the template went out.
+    const photos: { assetId: string; ok: boolean; messageId?: string; error?: string }[] = [];
+    const windowOpen = !!conv.lastInboundAt && Date.now() - conv.lastInboundAt.getTime() < SERVICE_WINDOW_MS;
+    if (result.ok && windowOpen) {
+      for (const assetId of b.photoAssetIds ?? []) {
+        const r = await this.outbound.send(agencyId, id, { kind: 'image', assetId }, { userId: p.userId }).catch((e) => ({ ok: false, messageId: '', errorMessage: e?.response?.message ?? 'Send failed' } as any));
+        photos.push({ assetId, ok: r.ok, messageId: r.messageId || undefined, error: r.ok ? undefined : r.errorMessage });
+      }
+    }
+    return { ...result, photos, photosSkipped: !windowOpen && !!b.photoAssetIds?.length };
   }
 
   @Post(':id/messages/:messageId/retry')

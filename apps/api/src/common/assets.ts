@@ -18,7 +18,7 @@ export function sniffImage(buf: Buffer): 'image/jpeg' | 'image/png' | null {
 export class AssetService {
   constructor(@Inject(STORAGE) readonly storage: StorageProvider) {}
 
-  async storeImage(tx: Tx, agencyId: string, userId: string | null, file: { buffer: Buffer } | undefined, assetType: 'vehicle_image' | 'logo') {
+  async storeImage(tx: Tx, agencyId: string, userId: string | null, file: { buffer: Buffer } | undefined, assetType: 'vehicle_image' | 'logo' | 'template_media') {
     if (!file?.buffer?.length) throw new BadRequestException({ code: 'file_required', message: 'A file is required' });
     if (file.buffer.length > MAX_IMAGE_BYTES) throw new PayloadTooLargeException({ code: 'file_too_large', message: 'Images must be 5 MB or smaller' });
     const mime = sniffImage(file.buffer);

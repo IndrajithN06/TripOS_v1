@@ -186,33 +186,7 @@ export class AgencyController {
   @Post('whatsapp/templates/sync')
   syncTemplates(@CurrentUser() p: Principal) { return this.accounts.syncTemplates(agencyOf(p)); }
 
-  // ---- templates ----
-  @Roles('AGENCY_ADMIN', 'SALES')
-  @Get('whatsapp/templates')
-  templates(@CurrentUser() p: Principal) {
-    return this.db.tenant(agencyOf(p), (tx) => tx.whatsappTemplate.findMany({ where: { agencyId: p.agencyId! }, orderBy: { name: 'asc' } }));
-  }
-
-  @Post('whatsapp/templates')
-  async createTemplate(@CurrentUser() p: Principal, @Body() body: unknown) {
-    const b = parse(z.object({ name: z.string().regex(/^[a-z0-9_]{3,60}$/, 'lowercase letters, digits, underscores'), language: z.string().default('en'), category: z.enum(['UTILITY', 'MARKETING', 'AUTHENTICATION']).default('UTILITY'), body: z.string().min(3).max(1024), variableSchema: z.array(z.string()).default([]) }), body);
-    const placeholders = [...b.body.matchAll(/\{\{(\d+)\}\}/g)].map((m) => Number(m[1]));
-    const max = placeholders.length ? Math.max(...placeholders) : 0;
-    if (b.variableSchema.length !== max) throw new BadRequestException({ code: 'variable_mismatch', message: `Template body uses ${max} variable(s) but ${b.variableSchema.length} are described` });
-    const agencyId = agencyOf(p);
-    return this.db.tenant(agencyId, async (tx) => {
-      const t = await tx.whatsappTemplate.create({ data: { agencyId, ...b, providerStatus: 'local_draft' } });
-      await audit(tx, { agencyId, actorUserId: p.userId, action: 'template.created', entityType: 'template', entityId: t.id });
-      return t;
-    });
-  }
-
-  @Post('whatsapp/templates/:id/submit')
-  async submitTemplate(@CurrentUser() p: Principal, @Param('id', ParseUUIDPipe) id: string) {
-    // Real provider: submitted to Meta for review (status comes back from Meta). Simulator: marked "submitted".
-    // Either way it is NOT approved until the provider says so.
-    return this.accounts.submitTemplate(agencyOf(p), p.userId, id);
-  }
+  // Template list/create/update/duplicate/delete/preview/submit: see modules/templates/templates.controller.ts
 }
 
 export const AGENCY_PROVIDERS = [];
