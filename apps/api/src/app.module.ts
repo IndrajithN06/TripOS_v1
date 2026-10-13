@@ -29,7 +29,7 @@ class WorkerBootstrap implements OnApplicationBootstrap {
   constructor(private readonly jobs: JobsService, private readonly quotes: QuotesService, private readonly whatsapp: WhatsappAccountService) {}
   onApplicationBootstrap() {
     // Retry only what is still failing; items already sent are skipped by idempotency in execute().
-    this.jobs.register('quote.retry', async (j) => { await this.quotes.execute(j.agencyId, j.payload.versionId, null); });
+    this.jobs.register('quote.retry', async (j) => { await this.quotes.execute(j.agencyId, j.payload.versionId, null, { auto: true }); });
     if (config().NODE_ENV !== 'test' && process.env.JOBS_WORKER !== 'false') {
       this.jobs.start();
       setInterval(() => void this.quotes.expireOverdue().catch(() => undefined), 10 * 60 * 1000).unref();

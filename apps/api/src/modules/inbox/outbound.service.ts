@@ -4,6 +4,7 @@ import { Db } from '../../db/db.service';
 import { STORAGE, StorageProvider } from '../../providers/storage/storage';
 import { hintForKind } from '../../providers/whatsapp/meta-errors';
 import { WaAccount, WaSendError, WHATSAPP, WhatsAppProvider } from '../../providers/whatsapp/whatsapp';
+import { isRetryableFailure } from '../quotes/retry-policy';
 import { WhatsappAccountService } from '../whatsapp/whatsapp-account.service';
 
 export const SERVICE_WINDOW_MS = 24 * 3600 * 1000;
@@ -22,7 +23,11 @@ interface Prepared {
   template: { name: string; language: string } | null;
 }
 
-export interface OutboundResult { ok: boolean; messageId: string; status: string; errorCode?: string; errorMessage?: string; deduplicated?: boolean }
+export interface OutboundResult {
+  ok: boolean; messageId: string; status: string; errorCode?: string; errorMessage?: string; deduplicated?: boolean;
+  /** Failures only: whether waiting and trying again could succeed (false for credential, window, template... problems). */
+  retryable?: boolean;
+}
 
 @Injectable()
 export class OutboundService {
@@ -100,7 +105,7 @@ export class OutboundService {
       await this.db.tenant(agencyId, (tx) => tx.message.update({ where: { id: msg.id }, data: { status: 'failed', errorCode: err.code, errorMessage: reason } }));
       // A revoked token or an account-level problem affects every send: surface it on the connection, not just this message.
       if (err.kind === 'auth' || err.kind === 'account') await this.accounts.recordFailure(agencyId, err).catch(() => undefined);
-      return { ok: false, messageId: msg.id, status: 'failed', errorCode: err.code, errorMessage: reason };
+      return { ok: false, messageId: msg.id, status: 'failed', errorCode: err.code, errorMessage: reason, retryable: isRetryableFailure(err.retryable, err.kind) };
     }
   }
 }

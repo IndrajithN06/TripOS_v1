@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, HttpException, Injectable, NotFoundException } from '@nestjs/common';
 import { calculateQuote, diffResults, PricingInput, PricingResult } from '@tripos/pricing';
 import { Decimal } from '@prisma/client/runtime/library';
 import { z } from 'zod';
@@ -6,10 +6,11 @@ import { audit } from '../../common/audit';
 import { AssetService } from '../../common/assets';
 import { Principal } from '../../common/auth';
 import { Db, Tx } from '../../db/db.service';
-import { OutboundService } from '../inbox/outbound.service';
+import { OutboundResult, OutboundService } from '../inbox/outbound.service';
 import { JobsService } from '../jobs/jobs.service';
 import { money, toSnapshot } from '../vehicles/vehicles.module';
 import { quoteMessageText, renderQuotePdf, RenderModel } from './quote-render';
+import { autoRetryDelayMs, SendOutcome, withinAutoRetryBudget } from './retry-policy';
 
 const iso = z.string().datetime({ offset: true });
 export const tripSchema = z.object({
@@ -373,7 +374,10 @@ export class QuotesService {
       const asset = await this.assets.storeBuffer(tx, agencyId, p.userId, pdf, 'application/pdf', 'quote_pdf');
       await tx.quoteVersion.update({ where: { id: version.id }, data: { pdfAssetId: asset.id, status: 'sending' } });
       const kinds: { kind: string; assetId?: string }[] = [{ kind: 'text' }, { kind: 'pdf', assetId: asset.id }, ...m.photoAssets.map((a) => ({ kind: 'image', assetId: a.id }))];
-      await tx.quoteSendAttempt.createMany({ data: kinds.map((k) => ({ agencyId, quoteVersionId: version.id, kind: k.kind, assetId: k.assetId })) });
+      // Strictly increasing timestamps: delivery order (text, PDF, then photos in the staff's order) is derived from createdAt,
+      // and a single batch insert would otherwise give every item the same value (an arbitrary order).
+      const base = Date.now();
+      await tx.quoteSendAttempt.createMany({ data: kinds.map((k, i) => ({ agencyId, quoteVersionId: version.id, kind: k.kind, assetId: k.assetId, createdAt: new Date(base + i) })) });
       await tx.quote.update({ where: { id: quote.id }, data: { followUpAt: opts.followUpAt ? new Date(opts.followUpAt) : quote.followUpAt } });
       await audit(tx, { agencyId, actorUserId: p.userId, action: 'quote.send_requested', entityType: 'quote', entityId: quoteId, metadata: { version: versionNumber, total: dec(version.total), images: m.photoAssets.length } });
       return version.id;
@@ -391,33 +395,53 @@ export class QuotesService {
     return this.execute(agencyId, versionId, p.userId);
   }
 
-  /** Processes only pending/failed attempts, so retries never re-send what the customer already has. */
-  async execute(agencyId: string, versionId: string, userId: string | null) {
+  /**
+   * Processes only the existing pending/failed delivery items, so a retry never re-sends what the customer already has
+   * and never creates new delivery records (each item keeps one row and an attempt counter).
+   *
+   * `opts.auto` marks a queued background retry. Those are bounded (see retry-policy.ts) and are skipped entirely while
+   * the WhatsApp connection is degraded or disconnected (e.g. expired credentials) until it is restored. A retry that staff
+   * trigger explicitly always runs, which is also how recovery after reconnecting is confirmed.
+   */
+  async execute(agencyId: string, versionId: string, userId: string | null, opts: { auto?: boolean } = {}) {
     const ctx = await this.db.tenant(agencyId, async (tx) => {
       const v = await tx.quoteVersion.findFirstOrThrow({ where: { id: versionId, agencyId } });
       const quote = await tx.quote.findFirstOrThrow({ where: { id: v.quoteId, agencyId } });
       const attempts = await tx.quoteSendAttempt.findMany({ where: { quoteVersionId: versionId, agencyId, status: { in: ['pending', 'failed'] } }, orderBy: { createdAt: 'asc' } });
+      const account = await tx.whatsappAccount.findFirst({ where: { agencyId }, select: { connectionStatus: true } });
       const m = await this.model(tx, agencyId, quote.id, v.versionNumber);
       const caps = new Map(m.captions.map((c) => [c.assetId, c.caption]));
-      return { v, quote, attempts, text: quoteMessageText(m.model), filename: `${quote.quoteNumber}-v${v.versionNumber}.pdf`, caps, convId: quote.conversationId! };
+      return { v, quote, attempts, connection: account?.connectionStatus, text: quoteMessageText(m.model), filename: `${quote.quoteNumber}-v${v.versionNumber}.pdf`, caps, convId: quote.conversationId! };
     });
 
-    for (const a of ctx.attempts) {
+    let items = ctx.attempts;
+    if (opts.auto) {
+      const unhealthy = ctx.connection === 'degraded' || ctx.connection === 'disconnected';
+      items = unhealthy ? [] : items.filter((a) => withinAutoRetryBudget(a.attempts));
+    }
+
+    const outcomes: SendOutcome[] = [];
+    for (const a of items) {
       const payload = a.kind === 'text' ? ({ kind: 'text', text: ctx.text } as const)
         : a.kind === 'pdf' ? ({ kind: 'document', assetId: a.assetId!, filename: ctx.filename, caption: `Quotation ${ctx.quote.quoteNumber}` } as const)
         : ({ kind: 'image', assetId: a.assetId!, caption: ctx.caps.get(a.assetId!) ?? undefined } as const);
-      let r;
+      let r: OutboundResult;
       try { r = await this.outbound.send(agencyId, ctx.convId, payload, { userId, idempotencyKey: `qsa:${a.id}` }); }
-      catch (e: any) { r = { ok: false, messageId: '', status: 'failed', errorCode: e?.response?.code ?? 'error', errorMessage: e?.response?.message ?? e?.message ?? 'Send failed' }; }
+      catch (e: any) {
+        // Pre-flight rejections (window closed, template not approved, not connected...) are HTTP 4xx: waiting will not fix them.
+        // Anything else was unexpected and may be transient.
+        r = { ok: false, messageId: '', status: 'failed', errorCode: e?.response?.code ?? 'error', errorMessage: e?.response?.message ?? e?.message ?? 'Send failed', retryable: !(e instanceof HttpException) };
+      }
+      outcomes.push({ attemptId: a.id, ok: r.ok, retryable: !r.ok && r.retryable === true });
       await this.db.tenant(agencyId, async (tx) => {
         await tx.quoteSendAttempt.update({ where: { id: a.id }, data: { status: r.ok ? 'sent' : 'failed', attempts: { increment: 1 }, lastError: r.ok ? null : r.errorMessage, messageId: r.messageId || undefined } });
         if (r.ok) await tx.quoteVersion.updateMany({ where: { id: versionId, sentAt: null }, data: { sentAt: new Date() } });
       });
     }
-    return this.finalise(agencyId, versionId);
+    return this.finalise(agencyId, versionId, outcomes);
   }
 
-  private async finalise(agencyId: string, versionId: string) {
+  private async finalise(agencyId: string, versionId: string, outcomes: SendOutcome[]) {
     const out = await this.db.tenant(agencyId, async (tx) => {
       const v = await tx.quoteVersion.findFirstOrThrow({ where: { id: versionId, agencyId } });
       const quote = await tx.quote.findFirstOrThrow({ where: { id: v.quoteId, agencyId } });
@@ -429,10 +453,16 @@ export class QuotesService {
       const nextQuote = pdfSent ? (['draft', 'ready_to_send', 'send_failed', 'negotiating'].includes(quote.status) ? 'sent' : quote.status) : quote.status === 'sent' || quote.status === 'negotiating' ? quote.status : 'send_failed';
       await tx.quote.update({ where: { id: quote.id }, data: { status: nextQuote } });
       const failed = attempts.filter((a) => a.status === 'failed');
-      await audit(tx, { agencyId, actorUserId: null, action: 'quote.send_finished', entityType: 'quote', entityId: quote.id, metadata: { version: v.versionNumber, status, failed: failed.length } });
-      return { quoteId: quote.id, versionNumber: v.versionNumber, versionStatus: status, quoteStatus: nextQuote, attempts: attempts.map((a) => ({ kind: a.kind, assetId: a.assetId, status: a.status, error: a.lastError })), retryable: failed.some((a) => !/window_closed|closed|not_connected|approved/i.test(a.lastError ?? '')) };
+      // Automatic retry is scheduled ONLY for items that just failed in a way that can succeed later and that still
+      // have budget left. Everything else (expired credentials, closed window, exhausted budget...) needs a person.
+      const justFailedRetryable = new Set(outcomes.filter((o) => !o.ok && o.retryable).map((o) => o.attemptId));
+      const retryableFailed = failed.filter((a) => justFailedRetryable.has(a.id));
+      const eligible = retryableFailed.filter((a) => withinAutoRetryBudget(a.attempts));
+      const nextRetryMs = eligible.length ? autoRetryDelayMs(Math.max(...eligible.map((a) => a.attempts))) : null;
+      await audit(tx, { agencyId, actorUserId: null, action: 'quote.send_finished', entityType: 'quote', entityId: quote.id, metadata: { version: v.versionNumber, status, failed: failed.length, autoRetryInMs: nextRetryMs } });
+      return { quoteId: quote.id, versionNumber: v.versionNumber, versionStatus: status, quoteStatus: nextQuote, attempts: attempts.map((a) => ({ kind: a.kind, assetId: a.assetId, status: a.status, error: a.lastError })), retryable: retryableFailed.length > 0, nextRetryMs };
     });
-    if (out.versionStatus !== 'sent') await this.jobs.enqueue(agencyId, 'quote.retry', { versionId }, { delayMs: 60_000 });
+    if (out.nextRetryMs !== null) await this.jobs.enqueue(agencyId, 'quote.retry', { versionId }, { delayMs: out.nextRetryMs });
     return out;
   }
 
