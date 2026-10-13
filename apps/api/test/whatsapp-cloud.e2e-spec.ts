@@ -31,6 +31,7 @@ class FakeCloud implements WhatsAppProvider {
   async getPhoneInfo(a: WaAccount) { this.calls.push('info'); this.seen.push(a); if (this.infoError) throw this.infoError; return this.phoneInfo; }
   async subscribeWebhooks(a: WaAccount) { this.calls.push('subscribe'); this.seen.push(a); if (this.subscribeError) throw this.subscribeError; }
   async listTemplates() { this.calls.push('list'); return this.templates; }
+  async uploadTemplateExample() { return '4::handle'; }
   async submitTemplate(_a: WaAccount, t: { name: string }) { this.calls.push('submit'); if (this.submitError) throw this.submitError; return { providerTemplateId: `meta-${t.name}`, status: 'PENDING' }; }
 }
 

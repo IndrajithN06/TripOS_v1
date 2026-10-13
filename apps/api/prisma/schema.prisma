@@ -284,6 +284,8 @@ model QuoteVersion {
   total         Decimal   @db.Decimal(18, 2)
   termsSnapshot Json
   pdfAssetId    String?   @db.Uuid
+  /// Unguessable token for the read-only customer quotation page (/q/<token>). Set when the version is first sent.
+  publicToken   String?   @unique
   createdById   String    @db.Uuid
   createdAt     DateTime  @default(now())
   sentAt        DateTime?
@@ -307,8 +309,9 @@ model QuoteSendAttempt {
   id             String   @id @default(uuid()) @db.Uuid
   agencyId       String   @db.Uuid
   quoteVersionId String   @db.Uuid
-  kind           String // text | pdf | image
+  kind           String // text | template | pdf | image
   assetId        String?  @db.Uuid
+  templateId     String?  @db.Uuid // for kind = template
   messageId      String?  @db.Uuid
   status         String   @default("pending") // pending | sent | failed
   attempts       Int      @default(0)
@@ -330,6 +333,11 @@ model WhatsappTemplate {
   providerTemplateId String?
   providerStatus     String   @default("local_draft") // local_draft | submitted | pending | approved | rejected | paused
   rejectedReason     String?
+  purpose            String   @default("custom") // quotation | followup | enquiry_ack | revised_quotation | custom
+  /// Named authoring definition (header, body with {{names}}, footer, buttons). Null for templates imported from Meta.
+  /// `body` + `variableSchema` always hold the compiled, positional form that is sent to and received from the provider.
+  spec               Json?
+  headerMediaAssetId String?  @db.Uuid // sample/custom media for an image header
   lastSyncedAt       DateTime?
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt

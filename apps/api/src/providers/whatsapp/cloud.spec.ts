@@ -58,12 +58,56 @@ describe('CloudWhatsApp requests', () => {
     ]);
   });
 
-  it('submits a template with example values for variables', async () => {
+  it('submits a template exactly as compiled, including media-header examples', async () => {
     fetchMock.mockReturnValueOnce(reply(200, { id: '999', status: 'PENDING', category: 'UTILITY' }));
-    const r = await new CloudWhatsApp().submitTemplate(acct, { name: 'quote_followup', language: 'en', category: 'UTILITY', body: 'Hi {{1}}, quote {{2}}', variables: ['name', 'quote'] });
+    const components = [{ type: 'HEADER', format: 'IMAGE', example: { header_handle: ['4::abc'] } }, { type: 'BODY', text: 'Hi {{1}}, quote {{2}}', example: { body_text: [['Asha', 'Q-1']] } }, { type: 'BUTTONS', buttons: [{ type: 'URL', text: 'View', url: 'https://x.test/q/{{1}}', example: ['https://x.test/q/abc'] }] }];
+    const r = await new CloudWhatsApp().submitTemplate(acct, { name: 'quote_followup', language: 'en', category: 'UTILITY', components });
     expect(r).toEqual({ providerTemplateId: '999', status: 'PENDING' });
     expect(call().url).toBe('https://graph.test/v99.0/WABA1/message_templates');
-    expect(JSON.parse(call().init.body as string)).toEqual({ name: 'quote_followup', language: 'en', category: 'UTILITY', components: [{ type: 'BODY', text: 'Hi {{1}}, quote {{2}}', example: { body_text: [['Example name', 'Example quote']] } }] });
+    expect(JSON.parse(call().init.body as string)).toEqual({ name: 'quote_followup', language: 'en', category: 'UTILITY', components });
+  });
+
+  it('sends a template with a media header, body values and a dynamic URL button in the provider component format', async () => {
+    fetchMock.mockReturnValueOnce(reply(200, { id: 'MEDIA9' })).mockReturnValueOnce(reply(200, { messages: [{ id: 'wamid.T' }] }));
+    const r = await new CloudWhatsApp().sendTemplate(acct, '+919800000000', {
+      name: 'quote_premium', language: 'en', variables: ['Asha', 'Golden Travels'], headerText: undefined,
+      header: { kind: 'document', data: Buffer.from('%PDF-1.4'), mimeType: 'application/pdf', filename: 'Q-0001-v1.pdf' }, buttons: [{ index: 0, kind: 'url', value: 'tok123' }],
+    });
+    expect(r.providerMessageId).toBe('wamid.T');
+    expect(call(0).url).toBe('https://graph.test/v99.0/PN1/media');                       // header media uploaded first
+    expect(JSON.parse(call(1).init.body as string).template).toEqual({
+      name: 'quote_premium', language: { code: 'en' },
+      components: [
+        { type: 'header', parameters: [{ type: 'document', document: { id: 'MEDIA9', filename: 'Q-0001-v1.pdf' } }] },
+        { type: 'body', parameters: [{ type: 'text', text: 'Asha' }, { type: 'text', text: 'Golden Travels' }] },
+        { type: 'button', sub_type: 'url', index: '0', parameters: [{ type: 'text', text: 'tok123' }] },
+      ],
+    });
+  });
+
+  it('sends image headers and text-header values, and a plain template without components when nothing is needed', async () => {
+    fetchMock.mockReturnValueOnce(reply(200, { id: 'IMG1' })).mockReturnValueOnce(reply(200, { messages: [{ id: 'w1' }] })).mockReturnValueOnce(reply(200, { messages: [{ id: 'w2' }] })).mockReturnValueOnce(reply(200, { messages: [{ id: 'w3' }] }));
+    const wa = new CloudWhatsApp();
+    await wa.sendTemplate(acct, '+919800000000', { name: 'a', language: 'en', variables: [], header: { kind: 'image', data: Buffer.from('x'), mimeType: 'image/png' } });
+    expect(JSON.parse(call(1).init.body as string).template.components).toEqual([{ type: 'header', parameters: [{ type: 'image', image: { id: 'IMG1' } }] }]);
+    await wa.sendTemplate(acct, '+919800000000', { name: 'b', language: 'en', variables: ['x'], headerText: 'Golden Travels' });
+    expect(JSON.parse(call(2).init.body as string).template.components).toEqual([{ type: 'header', parameters: [{ type: 'text', text: 'Golden Travels' }] }, { type: 'body', parameters: [{ type: 'text', text: 'x' }] }]);
+    await wa.sendTemplate(acct, '+919800000000', { name: 'c', language: 'en', variables: [] });
+    expect(JSON.parse(call(3).init.body as string).template.components).toEqual([]);
+  });
+
+  it('uploads a header example with the two-step resumable upload on the APP and returns the handle', async () => {
+    process.env.WHATSAPP_APP_ID = 'APP77'; resetConfigForTests();
+    fetchMock.mockReturnValueOnce(reply(200, { id: 'upload:SESSION1' })).mockReturnValueOnce(reply(200, { h: '4::HANDLE' }));
+    const h = await new CloudWhatsApp().uploadTemplateExample(acct, { data: Buffer.from('12345'), mimeType: 'image/jpeg', filename: 'logo.jpg' });
+    expect(h).toBe('4::HANDLE');
+    expect(call(0).url).toBe('https://graph.test/v99.0/APP77/uploads?file_name=logo.jpg&file_length=5&file_type=image%2Fjpeg');
+    expect(call(0).init.method).toBe('POST');
+    expect(call(1).url).toBe('https://graph.test/v99.0/upload:SESSION1');
+    expect((call(1).init.headers as any).Authorization).toBe('OAuth tok-123456');       // step 2 uses OAuth, not Bearer
+    expect((call(1).init.headers as any).file_offset).toBe('0');
+    delete process.env.WHATSAPP_APP_ID; resetConfigForTests();
+    await expect(new CloudWhatsApp().uploadTemplateExample(acct, { data: Buffer.from('1'), mimeType: 'image/png', filename: 'x.png' })).rejects.toMatchObject({ code: 'no_app_id' });
   });
 });
 

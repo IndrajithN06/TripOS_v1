@@ -6,7 +6,9 @@ import { audit } from '../../common/audit';
 import { AssetService } from '../../common/assets';
 import { Principal } from '../../common/auth';
 import { Db, Tx } from '../../db/db.service';
-import { OutboundResult, OutboundService } from '../inbox/outbound.service';
+import { randomToken } from '../../common/crypto';
+import { OutboundResult, OutboundService, SERVICE_WINDOW_MS } from '../inbox/outbound.service';
+import { TemplatesService } from '../templates/templates.service';
 import { JobsService } from '../jobs/jobs.service';
 import { money, toSnapshot } from '../vehicles/vehicles.module';
 import { quoteMessageText, renderQuotePdf, RenderModel } from './quote-render';
@@ -51,7 +53,7 @@ const dec = (v: any) => new Decimal(v.toString()).toFixed(2);
 
 @Injectable()
 export class QuotesService {
-  constructor(private readonly db: Db, private readonly assets: AssetService, private readonly outbound: OutboundService, private readonly jobs: JobsService) {}
+  constructor(private readonly db: Db, private readonly assets: AssetService, private readonly outbound: OutboundService, private readonly jobs: JobsService, private readonly templates: TemplatesService) {}
 
   // ------------------------------------------------------------------ pricing
 
@@ -385,6 +387,124 @@ export class QuotesService {
     return this.execute(agencyId, versionId, p.userId);
   }
 
+  // ------------------------------------------------------------------ WhatsApp template send
+
+  /** The PDF of a version as a stored asset (needed as a document header and as the downloadable copy). Reuses an existing one. */
+  async ensurePdfAsset(tx: Tx, agencyId: string, userId: string | null, quoteId: string, versionNumber: number) {
+    const m = await this.model(tx, agencyId, quoteId, versionNumber);
+    if (m.version.pdfAssetId) return { assetId: m.version.pdfAssetId, model: m };
+    const asset = await this.assets.storeBuffer(tx, agencyId, userId, await this.render(tx, agencyId, m), 'application/pdf', 'quote_pdf');
+    await tx.quoteVersion.update({ where: { id: m.version.id }, data: { pdfAssetId: asset.id } });
+    return { assetId: asset.id, model: m };
+  }
+
+  /** Approved templates for sending this version, best match first, plus what staff must confirm for a revised price. */
+  async templateOptions(p: Principal, agencyId: string, quoteId: string, versionNumber: number) {
+    const info = await this.db.tenant(agencyId, async (tx) => {
+      const { quote, version } = await this.current(tx, p, agencyId, quoteId);
+      const prev = versionNumber > 1 ? await tx.quoteVersion.findFirst({ where: { quoteId, agencyId, versionNumber: versionNumber - 1 } }) : null;
+      const conv = quote.conversationId ? await tx.conversation.findFirst({ where: { id: quote.conversationId, agencyId } }) : null;
+      return { version, previousTotal: prev ? dec(prev.total) : null, windowOpen: !!conv?.lastInboundAt && Date.now() - conv.lastInboundAt.getTime() < SERVICE_WINDOW_MS };
+    });
+    const revised = versionNumber > 1;
+    const list = await this.templates.approvedFor(agencyId, revised ? ['revised_quotation', 'quotation'] : ['quotation']);
+    const usable = list.filter((t: any) => t.purpose === 'quotation' || t.purpose === 'revised_quotation' || t.purpose === 'custom');
+    return { templates: usable, recommendedTemplateId: usable[0]?.id ?? null, windowOpen: info.windowOpen, previousTotal: info.previousTotal, currentTotal: dec(info.version.total), requiresPriceApproval: revised };
+  }
+
+  /**
+   * Sends a version to the customer with an approved WhatsApp template (text + header media + buttons). Free-form items (PDF,
+   * vehicle photos) follow only when the 24h window is open; otherwise they are reported as `deferred` rather than failing.
+   * A revised version (v2+) additionally needs the staff member to confirm the exact price with `approvedTotal`.
+   */
+  async sendWithTemplate(p: Principal, agencyId: string, quoteId: string, versionNumber: number, opts: { templateId: string; includePdf?: boolean; followUpAt?: string | null; approvedTotal?: string }) {
+    const planned = await this.db.tenant(agencyId, async (tx) => {
+      const { quote, version } = await this.current(tx, p, agencyId, quoteId);
+      if (version.versionNumber !== versionNumber) throw new ConflictException({ code: 'not_current', message: 'Only the current version can be sent' });
+      if (version.sentAt || version.status === 'sending') throw new ConflictException({ code: 'already_sent', message: 'This version was already sent. Use retry for failed items, or create a new version.' });
+      if (['accepted', 'declined'].includes(quote.status)) throw new ConflictException({ code: 'closed', message: 'This quote is closed' });
+      const tpl = await tx.whatsappTemplate.findFirst({ where: { id: opts.templateId, agencyId } });
+      if (!tpl || tpl.providerStatus !== 'approved') throw new BadRequestException({ code: 'template_not_approved', message: 'Choose a template that Meta has approved.' });
+      if (versionNumber > 1 && (!opts.approvedTotal || new Decimal(opts.approvedTotal).toFixed(2) !== dec(version.total))) {
+        throw new BadRequestException({ code: 'approval_required', message: `Confirm the revised price (${dec(version.total)}) before sending it to the customer.`, currentTotal: dec(version.total) });
+      }
+      const spec = this.templates.specOf(tpl);
+
+      let convId = quote.conversationId;
+      if (!convId) {
+        const existing = await tx.conversation.findFirst({ where: { agencyId, customerId: quote.customerId }, orderBy: { lastMessageAt: 'desc' } });
+        convId = existing?.id ?? (await tx.conversation.create({ data: { agencyId, customerId: quote.customerId, status: 'open' } })).id;
+        await tx.quote.update({ where: { id: quote.id }, data: { conversationId: convId } });
+      }
+      const conv = await tx.conversation.findFirstOrThrow({ where: { id: convId, agencyId } });
+      const windowOpen = !!conv.lastInboundAt && Date.now() - conv.lastInboundAt.getTime() < SERVICE_WINDOW_MS;
+
+      const { assetId: pdfAssetId, model: m } = await this.ensurePdfAsset(tx, agencyId, p.userId, quoteId, versionNumber);
+      if (!version.publicToken) await tx.quoteVersion.update({ where: { id: version.id }, data: { publicToken: randomToken(18) } });
+      // Fail now (nothing recorded as sent) if the template cannot be filled for this quote.
+      await this.templates.prepare(tx, agencyId, tpl, { quoteId, versionNumber, conversationId: convId, useSnapshot: true });
+
+      const wantPdf = opts.includePdf !== false && spec.header.type !== 'document';
+      const kinds: { kind: string; assetId?: string; templateId?: string }[] = [{ kind: 'template', templateId: tpl.id }];
+      if (windowOpen) {
+        if (wantPdf) kinds.push({ kind: 'pdf', assetId: pdfAssetId });
+        for (const a of m.photoAssets) kinds.push({ kind: 'image', assetId: a.id });
+      }
+      await tx.quoteVersion.update({ where: { id: version.id }, data: { status: 'sending' } });
+      const base = Date.now();
+      await tx.quoteSendAttempt.createMany({ data: kinds.map((k, i) => ({ agencyId, quoteVersionId: version.id, kind: k.kind, assetId: k.assetId, templateId: k.templateId, createdAt: new Date(base + i) })) });
+      await tx.quote.update({ where: { id: quote.id }, data: { followUpAt: opts.followUpAt ? new Date(opts.followUpAt) : quote.followUpAt } });
+      await audit(tx, { agencyId, actorUserId: p.userId, action: 'quote.template_send_requested', entityType: 'quote', entityId: quoteId, metadata: { version: versionNumber, template: tpl.name, total: dec(version.total), approvedTotal: opts.approvedTotal ?? null, windowOpen, images: windowOpen ? m.photoAssets.length : 0 } });
+      return { versionId: version.id, deferred: windowOpen ? null : { pdf: wantPdf, images: m.photoAssets.length, reason: 'The 24-hour window is closed. The template message goes out now; the PDF and photos can be sent once the customer replies.' } };
+    });
+    const result = await this.execute(agencyId, planned.versionId, p.userId);
+    return { ...result, deferred: planned.deferred };
+  }
+
+  /** The exact template message for a delivery item, rebuilt from the version so retries send identical content. */
+  private async templatePayload(agencyId: string, quoteId: string, versionNumber: number, templateId: string | null) {
+    return this.db.tenant(agencyId, async (tx) => {
+      const tpl = templateId ? await tx.whatsappTemplate.findFirst({ where: { id: templateId, agencyId } }) : null;
+      if (!tpl) throw new BadRequestException({ code: 'template_not_found', message: 'The template used for this send no longer exists.' });
+      const quote = await tx.quote.findFirstOrThrow({ where: { id: quoteId, agencyId } });
+      const prepared = await this.templates.prepare(tx, agencyId, tpl, { quoteId, versionNumber, conversationId: quote.conversationId ?? undefined, useSnapshot: true });
+      return { kind: 'template', templateId: tpl.id, variables: prepared.variables, extra: prepared.extra } as const;
+    });
+  }
+
+  // ------------------------------------------------------------------ public customer view (token only, no login)
+
+  private async byToken(tx: Tx, token: string) {
+    if (!/^[A-Za-z0-9_-]{16,64}$/.test(token)) throw new NotFoundException({ code: 'not_found', message: 'This quotation link is not valid.' });
+    const v = await tx.quoteVersion.findUnique({ where: { publicToken: token } });
+    if (!v || !v.sentAt) throw new NotFoundException({ code: 'not_found', message: 'This quotation link is not valid.' });
+    const quote = await tx.quote.findUniqueOrThrow({ where: { id: v.quoteId } });
+    return { v, quote };
+  }
+
+  /** What the customer sees at the link: no phone number, no internal data; an expired quote shows no prices. */
+  async publicView(token: string) {
+    return this.db.system(async (tx) => {
+      const { v, quote } = await this.byToken(tx, token);
+      const m = await this.model(tx, v.agencyId, quote.id, v.versionNumber);
+      const expired = effectiveStatus(quote) === 'expired' || (!!quote.expiryAt && quote.expiryAt < new Date());
+      const logo = m.logoAssetId ? await tx.asset.findFirst({ where: { id: m.logoAssetId, agencyId: v.agencyId } }) : null;
+      const photos = await Promise.all(m.photoAssets.map(async (a) => ({ url: await this.assets.url(a), caption: m.captions.find((c) => c.assetId === a.id)?.caption ?? null })));
+      const { customer, ...rest } = m.model;
+      return { expired, superseded: quote.currentVersionId !== v.id, customerName: customer.name, logoUrl: logo ? await this.assets.url(logo) : null, photos, model: expired ? { ...rest, lines: [], subtotal: null, discount: null, tax: null, total: null } : rest, pdfAvailable: !expired };
+    });
+  }
+
+  async publicPdf(token: string): Promise<{ data: Buffer; filename: string }> {
+    return this.db.system(async (tx) => {
+      const { v, quote } = await this.byToken(tx, token);
+      if (quote.expiryAt && quote.expiryAt < new Date()) throw new NotFoundException({ code: 'expired', message: 'This quotation has expired.' });
+      const m = await this.model(tx, v.agencyId, quote.id, v.versionNumber);
+      const data = v.pdfAssetId ? await this.assets.storage.get((await tx.asset.findFirstOrThrow({ where: { id: v.pdfAssetId, agencyId: v.agencyId } })).storageKey) : await this.render(tx, v.agencyId, m);
+      return { data, filename: `${quote.quoteNumber}-v${v.versionNumber}.pdf` };
+    });
+  }
+
   async retry(p: Principal, agencyId: string, quoteId: string, versionNumber: number) {
     const versionId = await this.db.tenant(agencyId, async (tx) => {
       const { version } = await this.current(tx, p, agencyId, quoteId);
@@ -422,11 +542,14 @@ export class QuotesService {
 
     const outcomes: SendOutcome[] = [];
     for (const a of items) {
-      const payload = a.kind === 'text' ? ({ kind: 'text', text: ctx.text } as const)
-        : a.kind === 'pdf' ? ({ kind: 'document', assetId: a.assetId!, filename: ctx.filename, caption: `Quotation ${ctx.quote.quoteNumber}` } as const)
-        : ({ kind: 'image', assetId: a.assetId!, caption: ctx.caps.get(a.assetId!) ?? undefined } as const);
       let r: OutboundResult;
-      try { r = await this.outbound.send(agencyId, ctx.convId, payload, { userId, idempotencyKey: `qsa:${a.id}` }); }
+      try {
+        const payload = a.kind === 'template' ? await this.templatePayload(agencyId, ctx.quote.id, ctx.v.versionNumber, a.templateId)
+          : a.kind === 'text' ? ({ kind: 'text', text: ctx.text } as const)
+          : a.kind === 'pdf' ? ({ kind: 'document', assetId: a.assetId!, filename: ctx.filename, caption: `Quotation ${ctx.quote.quoteNumber}` } as const)
+          : ({ kind: 'image', assetId: a.assetId!, caption: ctx.caps.get(a.assetId!) ?? undefined } as const);
+        r = await this.outbound.send(agencyId, ctx.convId, payload, { userId, idempotencyKey: `qsa:${a.id}` });
+      }
       catch (e: any) {
         // Pre-flight rejections (window closed, template not approved, not connected...) are HTTP 4xx: waiting will not fix them.
         // Anything else was unexpected and may be transient.
@@ -449,7 +572,10 @@ export class QuotesService {
       const okCount = attempts.filter((a) => a.status === 'sent').length;
       const status = okCount === attempts.length ? 'sent' : okCount === 0 ? 'failed' : 'partially_sent';
       await tx.quoteVersion.update({ where: { id: versionId }, data: { status } });
-      const pdfSent = attempts.find((a) => a.kind === 'pdf')?.status === 'sent';
+      // The headline item decides whether the customer "has the quote": the template message (which carries the quote
+      // link/PDF) for template sends, otherwise the PDF.
+      const primary = attempts.find((a) => a.kind === 'template') ?? attempts.find((a) => a.kind === 'pdf');
+      const pdfSent = primary?.status === 'sent';
       const nextQuote = pdfSent ? (['draft', 'ready_to_send', 'send_failed', 'negotiating'].includes(quote.status) ? 'sent' : quote.status) : quote.status === 'sent' || quote.status === 'negotiating' ? quote.status : 'send_failed';
       await tx.quote.update({ where: { id: quote.id }, data: { status: nextQuote } });
       const failed = attempts.filter((a) => a.status === 'failed');
