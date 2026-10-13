@@ -4,6 +4,8 @@ import { api, useApi } from '@/lib/api';
 import { fmtDateTime, inr, isoToZoned, zonedToIso } from '@/lib/format';
 import { Field, Modal, SimTag, StatusBadge, errMsg, useAction, useMe } from './ui';
 import { QuotePreview } from './QuotePreview';
+import { SendQuoteModal } from './SendQuoteModal';
+import { defaultPhotoSelection, sanitizeSelection, selectionSummary, toggleSelection } from '@/lib/photos';
 
 type Charge = { label: string; amount: string; taxable: boolean };
 interface Form {
@@ -42,7 +44,11 @@ export function QuoteBuilder({ conversationId, customerId, quoteId, prefill, onC
   const [form, setForm] = useState<Form>(() => ({ ...blank(tz), ...prefill }));
   const [calc, setCalc] = useState<any>(null), [calcErr, setCalcErr] = useState('');
   const [preview, setPreview] = useState<any>(null), [sendResult, setSendResult] = useState<any>(null), [busy, setBusy] = useState(false);
+  const [noPhotoPrompt, setNoPhotoPrompt] = useState(false);
+  const photoSection = useRef<HTMLElement>(null);
+  const promptMode = useRef<'template' | 'plain'>('template');
   const [followUp, setFollowUp] = useState('');
+  const [sendModal, setSendModal] = useState<{ quoteId: string; versionNumber: number } | null>(null);
   const set = <K extends keyof Form>(k: K, v: Form[K]) => setForm((f) => ({ ...f, [k]: v }));
 
   const load = useCallback(async (id: string) => {
@@ -54,6 +60,7 @@ export function QuoteBuilder({ conversationId, customerId, quoteId, prefill, onC
   useEffect(() => { if (quoteId) void load(quoteId); }, [quoteId, load]);
 
   const vehicle = vehicles?.find((v) => v.id === form.vehicleTypeId);
+  const photos = selectionSummary(vehicle, form.imageAssetIds);
   const current = quote?.versions.find((v: any) => v.id === quote.currentVersionId);
   const locked = !!current?.immutable; // current version already sent: saving creates a new version
   const canOverride = me.user.role === 'AGENCY_ADMIN' || me.user.canOverrideRates;
@@ -71,9 +78,9 @@ export function QuoteBuilder({ conversationId, customerId, quoteId, prefill, onC
       overrides: Object.fromEntries(Object.entries(form.overrides).filter(([, v]) => v !== '')),
       extraCharges: form.extraCharges.filter((c) => c.label && c.amount !== ''),
       discount: form.discountValue ? { type: form.discountType, value: form.discountValue } : null,
-      includeDriverBatta: form.includeDriverBatta, inclusions: form.inclusions || null, exclusions: form.exclusions || null, notes: form.notes || null, terms: form.terms || null, imageAssetIds: form.imageAssetIds,
+      includeDriverBatta: form.includeDriverBatta, inclusions: form.inclusions || null, exclusions: form.exclusions || null, notes: form.notes || null, terms: form.terms || null, imageAssetIds: sanitizeSelection(form.imageAssetIds, vehicle),
     };
-  }, [form, tz]);
+  }, [form, tz, vehicle]);
 
   // Live total: provisional display only. The backend recomputes authoritatively on save/send.
   const timer = useRef<ReturnType<typeof setTimeout>>(undefined);
@@ -103,7 +110,15 @@ export function QuoteBuilder({ conversationId, customerId, quoteId, prefill, onC
     if (q) { const cur = q.versions.find((v: any) => v.id === q.currentVersionId); await run(async () => setPreview(await api(`/quotes/${q.id}/versions/${cur.versionNumber}/preview`))); }
     setBusy(false);
   }
-  async function doSend() {
+  async function doSend(skipPhotoCheck = false) {
+    // Staff must not send a quote without photos by accident when the vehicle has some: ask first.
+    if (photos.needsWarning && !skipPhotoCheck) {
+      promptMode.current = 'plain';
+      setNoPhotoPrompt(true);
+      photoSection.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      return;
+    }
+    setNoPhotoPrompt(false);
     setBusy(true);
     const q = await save();
     if (q) {
@@ -113,6 +128,15 @@ export function QuoteBuilder({ conversationId, customerId, quoteId, prefill, onC
     }
     setBusy(false);
   }
+  /** Saves the form, then opens the template send dialog for the saved current version. */
+  async function openTemplateSend(skipPhotoCheck = false) {
+    if (photos.needsWarning && !skipPhotoCheck) { promptMode.current = 'template'; setNoPhotoPrompt(true); photoSection.current?.scrollIntoView({ behavior: 'smooth', block: 'center' }); return; }
+    setNoPhotoPrompt(false);
+    setBusy(true);
+    const q = await save();
+    if (q) { const cur = q.versions.find((v: any) => v.id === q.currentVersionId); await load(q.id); setSendModal({ quoteId: q.id, versionNumber: cur.versionNumber }); }
+    setBusy(false);
+  }
   async function retry() {
     if (!quote) return;
     const cur = quote.versions.find((v: any) => v.id === quote.currentVersionId);
@@ -120,7 +144,7 @@ export function QuoteBuilder({ conversationId, customerId, quoteId, prefill, onC
     if (r) { setSendResult(r); await load(quote.id); onChanged?.(); }
   }
 
-  const togglePhoto = (id: string) => set('imageAssetIds', form.imageAssetIds.includes(id) ? form.imageAssetIds.filter((x) => x !== id) : [...form.imageAssetIds, id]);
+  const togglePhoto = (id: string) => { set('imageAssetIds', toggleSelection(form.imageAssetIds, id)); setNoPhotoPrompt(false); };
   const isLocal = form.tripType !== 'outstation';
   const days = useMemo(() => {
     const a = zonedToIso(form.pickupLocal, tz), b = zonedToIso(form.returnLocal, tz);
@@ -161,7 +185,12 @@ export function QuoteBuilder({ conversationId, customerId, quoteId, prefill, onC
 
           <section className="card stack">
             <h2>02 · Vehicle & pricing</h2>
-            <Field label="Vehicle type"><select value={form.vehicleTypeId} onChange={(e) => setForm((f) => ({ ...f, vehicleTypeId: e.target.value, imageAssetIds: [], overrides: {} }))}>
+            <Field label="Vehicle type"><select value={form.vehicleTypeId} onChange={(e) => {
+              // A new vehicle starts with ITS primary photo selected; photos of the previous vehicle are never kept.
+              const next = vehicles?.find((v) => v.id === e.target.value);
+              setNoPhotoPrompt(false);
+              setForm((f) => ({ ...f, vehicleTypeId: e.target.value, imageAssetIds: defaultPhotoSelection(next), overrides: {} }));
+            }}>
               <option value="">Select a vehicle…</option>{vehicles?.map((v) => <option key={v.id} value={v.id}>{v.name} · {v.seats} seats</option>)}</select></Field>
             {vehicle && (
               <>
@@ -193,15 +222,31 @@ export function QuoteBuilder({ conversationId, customerId, quoteId, prefill, onC
             </div>
           </section>
 
-          <section className="card stack">
-            <h2>03 · Vehicle photos for this customer</h2>
+          <section className="card stack" ref={photoSection}>
+            <div className="row between">
+              <h2 style={{ margin: 0 }}>03 · Vehicle photos for this customer</h2>
+              {vehicle && photos.total > 0 && <span className={`badge ${photos.selected > 0 ? 'green' : 'amber'}`} aria-live="polite" data-testid="photo-count">{photos.label}</span>}
+            </div>
             {!vehicle ? <div className="muted small">Select a vehicle to choose photos.</div> : vehicle.images.length === 0 ? <div className="muted small">This vehicle has no photos yet. Add some in Vehicle Types.</div> : (
-              <div className="photos">{vehicle.images.map((im: any) => {
-                const on = form.imageAssetIds.includes(im.assetId);
-                return <button type="button" key={im.id} className={`photo ${on ? 'on' : ''}`} aria-pressed={on} onClick={() => togglePhoto(im.assetId)} title={im.caption ?? ''}><img src={im.url} alt={im.altText ?? im.caption ?? vehicle.name} />{on && <span className="tick">✓</span>}</button>;
-              })}</div>
+              <>
+                {photos.needsWarning && (
+                  <div className={`banner warn small ${noPhotoPrompt ? 'attn' : ''}`} role="alert" data-testid="no-photo-warning">
+                    <strong>No photos selected.</strong> This vehicle has {photos.total} photo{photos.total === 1 ? '' : 's'}, but the customer will receive this quote <strong>without any photos</strong> unless you select at least one below.
+                  </div>
+                )}
+                <div className="photos">{vehicle.images.map((im: any) => {
+                  const on = form.imageAssetIds.includes(im.assetId);
+                  return (
+                    <button type="button" key={im.id} className={`photo ${on ? 'on' : ''}`} aria-pressed={on} onClick={() => togglePhoto(im.assetId)} title={im.caption ?? ''}>
+                      <img src={im.url} alt={im.altText ?? im.caption ?? vehicle.name} />
+                      {on && <span className="tick" aria-hidden>✓</span>}
+                      <span className="pill">{on ? 'Selected' : 'Tap to add'}</span>
+                    </button>
+                  );
+                })}</div>
+              </>
             )}
-            <div className="small muted">{form.imageAssetIds.length} selected · sent as separate WhatsApp images after the PDF</div>
+            <div className="small muted">Selected photos are sent as separate WhatsApp images after the PDF. {vehicle && vehicle.images.some((i: any) => i.isPrimary) && 'The vehicle\'s primary photo is selected by default; you can change it.'}</div>
           </section>
 
           <section className="card stack">
@@ -231,7 +276,17 @@ export function QuoteBuilder({ conversationId, customerId, quoteId, prefill, onC
             <div className="small muted">Calculated by the server. The final total is re-validated when you save or send.</div>
             <Field label="Follow-up reminder (optional)"><input type="datetime-local" value={followUp} onChange={(e) => setFollowUp(e.target.value)} /></Field>
             <button className="btn" disabled={busy || !form.vehicleTypeId} onClick={doPreview}>Save & preview</button>
-            <button className="btn primary" disabled={busy || !calc} onClick={doSend}>{locked ? `Save v${current.versionNumber + 1} & send via WhatsApp` : 'Send via WhatsApp'}</button>
+            {noPhotoPrompt && photos.needsWarning && (
+              <div className="banner warn small stack" role="alertdialog" aria-label="Send without photos?" data-testid="no-photo-prompt">
+                <div><strong>Send without photos?</strong> This vehicle has {photos.total} photo{photos.total === 1 ? '' : 's'}, but none are selected.</div>
+                <div className="row">
+                  <button className="btn sm primary" onClick={() => { set('imageAssetIds', defaultPhotoSelection(vehicle)); setNoPhotoPrompt(false); }}>Select the primary photo</button>
+                  <button className="btn sm" onClick={() => void (promptMode.current === 'template' ? openTemplateSend(true) : doSend(true))}>Send without photos</button>
+                </div>
+              </div>
+            )}
+            <button className="btn primary" disabled={busy || !calc} onClick={() => void openTemplateSend()}>{locked ? `Save v${current.versionNumber + 1} & send quotation on WhatsApp` : 'Send Quotation on WhatsApp'}</button>
+            <button className="btn" disabled={busy || !calc} title="Plain text, PDF and photos. WhatsApp allows this only within 24 hours of the customer's last message." onClick={() => void doSend()}>{locked ? `Save v${current.versionNumber + 1} & send as plain messages` : 'Send as plain messages (24h window)'}</button>
             <button className="btn" disabled={busy || !form.vehicleTypeId} onClick={() => save()}>{locked ? 'Create new version (draft)' : 'Save draft'}</button>
             {me.environment.whatsappSimulated && <div className="small"><SimTag /> Sends go to the local simulator only.</div>}
           </section>
@@ -241,7 +296,7 @@ export function QuoteBuilder({ conversationId, customerId, quoteId, prefill, onC
               <h2>Delivery</h2>
               <div className="row"><StatusBadge s={sendResult.versionStatus} /><span className="small muted">version {sendResult.versionNumber}</span></div>
               {sendResult.attempts.map((a: any, i: number) => (
-                <div className="row between small" key={i}><span>{a.kind === 'text' ? 'Message' : a.kind === 'pdf' ? 'Quotation PDF' : `Photo ${i - 1}`}</span><span><StatusBadge s={a.status} /></span></div>
+                <div className="row between small" key={i}><span>{a.kind === 'template' ? 'WhatsApp template message' : a.kind === 'text' ? 'Message' : a.kind === 'pdf' ? 'Quotation PDF' : 'Vehicle photo'}</span><span><StatusBadge s={a.status} /></span></div>
               ))}
               {sendResult.attempts.some((a: any) => a.error) && <div className="banner err small">{sendResult.attempts.find((a: any) => a.error)?.error}</div>}
               {sendResult.versionStatus !== 'sent' && <button className="btn blue" onClick={retry}>Retry failed items only</button>}
@@ -252,6 +307,7 @@ export function QuoteBuilder({ conversationId, customerId, quoteId, prefill, onC
           )}
         </div>
       </div>
+      {sendModal && <SendQuoteModal quoteId={sendModal.quoteId} versionNumber={sendModal.versionNumber} onClose={() => setSendModal(null)} onSent={() => { void load(sendModal.quoteId); onChanged?.(); }} />}
       {preview && <Modal title="Customer preview" onClose={() => setPreview(null)}>
         <QuotePreview p={preview} />
         <div className="row" style={{ marginTop: 12 }}><a className="btn" target="_blank" rel="noreferrer" href={`/api/quotes/${quote.id}/versions/${preview.versionNumber}/pdf`}>Open PDF</a></div>
