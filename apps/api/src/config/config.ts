@@ -34,6 +34,10 @@ const schema = z.object({
   WHATSAPP_APP_ID: z.string().optional(),
   WHATSAPP_APP_SECRET: z.string().optional(),
   WHATSAPP_VERIFY_TOKEN: z.string().optional(),
+  /** Embedded Signup v4 (coexistence). Disabled unless explicitly turned on; the manual connection is unaffected. */
+  WHATSAPP_EMBEDDED_SIGNUP_ENABLED: bool,
+  /** The Facebook Login for Business configuration id (v4) created in the Meta app dashboard. */
+  WHATSAPP_EMBEDDED_SIGNUP_CONFIG_ID: z.string().optional(),
 
   AI_PROVIDER: z.enum(['mock', 'disabled', 'openai']).default('mock'),
   AI_MODEL: z.string().default('gpt-4o-mini'),
@@ -89,6 +93,9 @@ export function validateConfig(env: Record<string, string | undefined>): AppConf
   // (every Meta delivery rejected as unsigned, and the verification handshake refused).
   if (c.NODE_ENV !== 'production' && c.WHATSAPP_PROVIDER === 'cloud') {
     for (const k of ['WHATSAPP_APP_SECRET', 'WHATSAPP_VERIFY_TOKEN'] as const) if (!c[k]) problems.push(`${k} is required when WHATSAPP_PROVIDER=cloud (set it in apps/api/.env)`);
+  }
+  if (c.WHATSAPP_EMBEDDED_SIGNUP_ENABLED && c.WHATSAPP_PROVIDER === 'cloud') {
+    for (const k of ['WHATSAPP_APP_ID', 'WHATSAPP_APP_SECRET', 'WHATSAPP_EMBEDDED_SIGNUP_CONFIG_ID'] as const) if (!c[k]) problems.push(`${k} is required when WHATSAPP_EMBEDDED_SIGNUP_ENABLED=true with the cloud provider`);
   }
   if (problems.length) throw new Error('Unsafe or incomplete configuration:\n' + problems.map((p) => `  - ${p}`).join('\n'));
   return { ...c, isProd: c.NODE_ENV === 'production' };

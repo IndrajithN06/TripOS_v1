@@ -102,8 +102,40 @@ model WhatsappAccount {
   lastErrorCode       String?
   lastErrorAt         DateTime?
   createdAt           DateTime @default(now())
+  onboardingMethod    String   @default("manual") // manual | embedded
+  isCoexistence       Boolean  @default(false) // number is also used in the WhatsApp Business app
+  businessId          String?
+  connectedByUserId   String?  @db.Uuid
 
   @@index([wabaId])
+}
+
+/// One Embedded Signup run for an agency. Makes onboarding idempotent and resumable: the exchanged business token is held
+/// (encrypted) between the code exchange and the final commit, and is cleared once committed, failed for good, or expired.
+model WhatsappSignupAttempt {
+  id            String    @id @default(uuid()) @db.Uuid
+  agencyId      String    @db.Uuid
+  userId        String    @db.Uuid
+  stateHash     String // sha256 of the one-time state value handed to the admin's browser
+  status        String    @default("started") // started | running | failed | failed_permanent | completed | cancelled | expired
+  step          String    @default("start") // start | exchange | verify | subscribe | commit | done
+  codeHash      String?   @unique // sha256 of the authorization code: a code is never exchanged twice
+  tokenRef      String? // AES-GCM encrypted business token between exchange and commit
+  wabaId        String?
+  phoneNumberId String?
+  businessId    String?
+  requestSync   Boolean   @default(false)
+  syncStatus    String? // requested | failed
+  failedStep    String?
+  lastErrorCode String?
+  lastError     String?
+  runStartedAt  DateTime?
+  expiresAt     DateTime
+  completedAt   DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@index([agencyId, status])
 }
 
 model Customer {

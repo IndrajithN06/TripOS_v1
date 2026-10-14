@@ -29,7 +29,22 @@ export type WaEvent =
   | { kind: 'message'; phoneNumberId: string; providerMessageId: string; from: string; name?: string; type: string; text?: string; mediaId?: string; mimeType?: string; timestamp: Date }
   | { kind: 'status'; phoneNumberId: string; providerMessageId: string; status: 'sent' | 'delivered' | 'read' | 'failed'; errorCode?: string; errorMessage?: string; timestamp: Date }
   | { kind: 'template'; wabaId: string; providerTemplateId: string; name?: string; language?: string; event: string; reason?: string; timestamp: Date }
-  | { kind: 'account'; wabaId?: string; phoneNumberId?: string; event: string; detail?: string; timestamp: Date };
+  | { kind: 'account'; wabaId?: string; phoneNumberId?: string; event: string; detail?: string; timestamp: Date; disconnectionReason?: string; initiatedBy?: string }
+  /** WhatsApp Business app coexistence: a message the business sent from the app (`smb_message_echoes`). */
+  | { kind: 'echo'; phoneNumberId: string; providerMessageId: string; to: string; type: string; text?: string; action?: 'edit' | 'revoke'; timestamp: Date }
+  /** WhatsApp Business app coexistence: one chunk of imported chat history (`history`), or the business declining to share it. */
+  | { kind: 'history'; phoneNumberId: string; phase?: number; chunkOrder?: number; progress?: number; declined?: { code: string; message?: string }; messages: WaHistoryMessage[] }
+  /** WhatsApp Business app coexistence: contact changes made in the app (`smb_app_state_sync`). */
+  | { kind: 'contacts'; phoneNumberId: string; items: { action: 'add' | 'remove'; phone: string; fullName?: string; timestamp: Date }[] };
+
+export interface WaHistoryMessage { providerMessageId: string; customerPhone: string; direction: 'inbound' | 'outbound'; type: string; text?: string; status?: string; timestamp: Date }
+
+/** Result of exchanging an Embedded Signup authorization code. The token is a secret: never log or return it. */
+export interface WaExchangedToken { accessToken: string }
+/** A phone number under a WABA, as listed by Meta. */
+export interface WaWabaPhone { id: string; displayPhoneNumber?: string; verifiedName?: string }
+/** Whether a number is linked to the WhatsApp Business app and Cloud API at once (coexistence). */
+export interface WaCoexistenceInfo { isOnBizApp: boolean; platformType?: string }
 
 export class WaSendError extends Error {
   constructor(message: string, readonly code = 'send_failed', readonly retryable = true, readonly kind: WaErrorKind = 'unknown') { super(message); }
@@ -55,6 +70,16 @@ export interface WhatsAppProvider {
   submitTemplate(a: WaAccount, t: { name: string; language: string; category: string; components: Record<string, unknown>[] }): Promise<{ providerTemplateId: string; status: string }>;
   /** Uploads an example file for an image/document template header; returns the handle to put in the template definition. */
   uploadTemplateExample(a: WaAccount, f: { data: Buffer; mimeType: string; filename: string }): Promise<string>;
+
+  // ---- Embedded Signup v4 / coexistence (server-side only) ----
+  /** Exchanges the one-time authorization code (valid ~30 s) for the customer's business token, using the app secret. */
+  exchangeSignupCode(code: string): Promise<WaExchangedToken>;
+  /** Phone numbers of a WABA visible to the token. Succeeding is evidence the token really has access to that WABA. */
+  listWabaPhoneNumbers(a: WaAccount): Promise<WaWabaPhone[]>;
+  /** Reads `is_on_biz_app` / `platform_type` for the number. */
+  getCoexistenceInfo(a: WaAccount): Promise<WaCoexistenceInfo>;
+  /** Asks Meta to start sending contacts (`smb_app_state_sync`) or chat history (`history`) for a coexistence number. */
+  requestSmbSync(a: WaAccount, syncType: 'smb_app_state_sync' | 'history'): Promise<void>;
 }
 
 /** Everything needed to send one template message, in the provider-neutral form TripOS uses. */
@@ -118,6 +143,31 @@ export class SimulatorWhatsApp implements WhatsAppProvider {
     return { providerTemplateId, status: 'PENDING' };
   }
   async uploadTemplateExample(_a: WaAccount, f: { filename: string }) { return `sim-handle-${f.filename}`; }
+
+  // ---- Embedded Signup simulation: codes are registered by tests/dev tools; each is single use, like Meta's ----
+  readonly signupFixtures = new Map<string, { wabaId: string; phoneNumberId: string; displayPhoneNumber?: string; isOnBizApp: boolean }>();
+  private readonly signupTokens = new Map<string, { wabaId: string; phoneNumberId: string; displayPhoneNumber?: string; isOnBizApp: boolean }>();
+  readonly syncRequests: { phoneNumberId: string; syncType: string }[] = [];
+  async exchangeSignupCode(code: string): Promise<WaExchangedToken> {
+    const f = this.signupFixtures.get(code);
+    if (!f) throw new WaSendError('[simulated] the authorization code is invalid, expired or already used', 'code_invalid', false, 'auth');
+    this.signupFixtures.delete(code);
+    const accessToken = `sim-token-${code}`;
+    this.signupTokens.set(accessToken, f);
+    return { accessToken };
+  }
+  private fixtureFor(a: WaAccount) {
+    const f = a.token ? this.signupTokens.get(a.token) : undefined;
+    if (!f) throw new WaSendError('[simulated] the token has no access to this account', '190', false, 'auth');
+    return f;
+  }
+  async listWabaPhoneNumbers(a: WaAccount): Promise<WaWabaPhone[]> {
+    const f = this.fixtureFor(a);
+    if (a.wabaId !== f.wabaId) throw new WaSendError('[simulated] the token has no access to this WABA', '100', false, 'account');
+    return [{ id: f.phoneNumberId, displayPhoneNumber: f.displayPhoneNumber, verifiedName: 'Simulated line' }];
+  }
+  async getCoexistenceInfo(a: WaAccount): Promise<WaCoexistenceInfo> { const f = this.fixtureFor(a); return { isOnBizApp: f.isOnBizApp, platformType: 'CLOUD_API' }; }
+  async requestSmbSync(a: WaAccount, syncType: 'smb_app_state_sync' | 'history') { this.syncRequests.push({ phoneNumberId: a.phoneNumberId, syncType }); }
 }
 
 // ----------------------------------------------------------------------------------------------
@@ -239,6 +289,52 @@ export class CloudWhatsApp implements WhatsAppProvider {
     if (!done?.h) throw new WaSendError('Meta did not return an upload handle', 'no_handle', false, 'unknown');
     return String(done.h);
   }
+
+  // ---- Embedded Signup v4 / coexistence ----
+
+  /**
+   * Server-side authorization-code exchange (Meta: GET /oauth/access_token with client_id, client_secret, code; the code lives
+   * about 30 seconds and is single use). The app secret never leaves the server and errors never echo the request URL.
+   */
+  async exchangeSignupCode(code: string): Promise<WaExchangedToken> {
+    const { WHATSAPP_APP_ID: clientId, WHATSAPP_APP_SECRET: clientSecret } = config();
+    if (!clientId || !clientSecret) throw new WaSendError('Embedded Signup is not configured on the server (app id and secret)', 'not_configured', false, 'account');
+    let res: Response;
+    try {
+      res = await fetch(`${this.base}/oauth/access_token?${new URLSearchParams({ client_id: clientId, client_secret: clientSecret, code })}`, { signal: AbortSignal.timeout(20000) });
+    } catch {
+      throw new WaSendError('Could not reach Meta to complete the sign-up', 'network', true, 'transient');
+    }
+    const json: any = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const c = classifyMetaError(res.status, json?.error?.code, json?.error?.message);
+      throw new WaSendError(json?.error?.message ?? `Meta rejected the authorization code (${res.status})`, String(json?.error?.code ?? res.status), c.retryable, c.kind === 'unknown' ? 'auth' : c.kind);
+    }
+    if (typeof json?.access_token !== 'string' || !json.access_token) throw new WaSendError('Meta did not return an access token', 'no_token', false, 'unknown');
+    return { accessToken: json.access_token };
+  }
+
+  async listWabaPhoneNumbers(a: WaAccount): Promise<WaWabaPhone[]> {
+    if (!a.wabaId) throw new WaSendError('WABA ID is required to list phone numbers', 'no_waba', false, 'account');
+    const out: WaWabaPhone[] = [];
+    let next: string | undefined = `${a.wabaId}/phone_numbers?fields=id,display_phone_number,verified_name&limit=100`;
+    for (let page = 0; next && page < 5; page++) {
+      const j: any = await this.graph(a, next);
+      for (const p of j.data ?? []) out.push({ id: String(p.id), displayPhoneNumber: p.display_phone_number, verifiedName: p.verified_name });
+      next = j.paging?.next;
+    }
+    return out;
+  }
+
+  async getCoexistenceInfo(a: WaAccount): Promise<WaCoexistenceInfo> {
+    const j = await this.graph(a, `${a.phoneNumberId}?fields=is_on_biz_app,platform_type`);
+    return { isOnBizApp: j.is_on_biz_app === true, platformType: j.platform_type };
+  }
+
+  async requestSmbSync(a: WaAccount, syncType: 'smb_app_state_sync' | 'history') {
+    await this.call(a, 'smb_app_data', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ messaging_product: 'whatsapp', sync_type: syncType }) });
+  }
+
   verifySignature(rawBody: Buffer, header: string | undefined) {
     const secret = config().WHATSAPP_APP_SECRET;
     if (!secret || !header?.startsWith('sha256=')) return false;
@@ -260,7 +356,51 @@ export function parseCloudPayload(body: any): WaEvent[] {
         continue;
       }
       if (change?.field === 'phone_number_quality_update' || change?.field === 'account_update' || change?.field === 'phone_number_name_update') {
-        events.push({ kind: 'account', wabaId: entry?.id ? String(entry.id) : undefined, event: String(v?.event ?? change.field), detail: v?.current_limit ?? v?.decision ?? v?.requested_verified_name ?? undefined, timestamp: entryTime });
+        // For account_update Meta's example puts the WABA in waba_info; `entry.id` can be a partner business id, so prefer waba_info.
+        const wabaId = v?.waba_info?.waba_id ?? entry?.id;
+        events.push({
+          kind: 'account', wabaId: wabaId ? String(wabaId) : undefined, event: String(v?.event ?? change.field), detail: v?.current_limit ?? v?.decision ?? v?.requested_verified_name ?? undefined, timestamp: entryTime,
+          disconnectionReason: v?.disconnection_info?.reason ? String(v.disconnection_info.reason) : undefined, initiatedBy: v?.disconnection_info?.initiated_by ? String(v.disconnection_info.initiated_by) : undefined,
+        });
+        continue;
+      }
+      // Coexistence (WhatsApp Business app + Cloud API). Phone numbers arrive without "+".
+      if (change?.field === 'smb_message_echoes' && v?.metadata?.phone_number_id) {
+        for (const m of v.message_echoes ?? []) {
+          const body = m[m.type];
+          const action = m.type === 'revoke' ? 'revoke' as const : m.type === 'edit' ? 'edit' as const : undefined;
+          events.push({
+            kind: 'echo', phoneNumberId: String(v.metadata.phone_number_id), providerMessageId: String(m.id), to: `+${m.to}`, type: String(m.type), action,
+            text: m.type === 'text' ? body?.body : m.type === 'edit' ? body?.message?.text?.body : body?.caption,
+            timestamp: new Date((Number(m.timestamp) || Math.floor(Date.now() / 1000)) * 1000),
+          });
+        }
+        continue;
+      }
+      if (change?.field === 'history' && v?.metadata?.phone_number_id) {
+        const phoneNumberId = String(v.metadata.phone_number_id);
+        for (const h of v.history ?? []) {
+          const err = (h?.errors ?? v?.errors)?.[0];
+          if (err) { events.push({ kind: 'history', phoneNumberId, messages: [], declined: { code: String(err.code), message: err.message ?? err.title } }); continue; }
+          const messages: WaHistoryMessage[] = [];
+          for (const t of h?.threads ?? []) {
+            for (const m of t?.messages ?? []) {
+              const body = m[m.type];
+              messages.push({
+                providerMessageId: String(m.id), customerPhone: `+${t.id}`, direction: String(m.from) === String(t.id) ? 'inbound' : 'outbound', type: String(m.type),
+                text: m.type === 'text' ? body?.body : body?.caption, status: m.history_context?.status, timestamp: new Date(Number(m.timestamp) * 1000),
+              });
+            }
+          }
+          events.push({ kind: 'history', phoneNumberId, phase: h?.metadata?.phase, chunkOrder: h?.metadata?.chunk_order, progress: h?.metadata?.progress, messages });
+        }
+        continue;
+      }
+      if (change?.field === 'smb_app_state_sync' && v?.metadata?.phone_number_id) {
+        const items = (v.state_sync ?? []).filter((s: any) => s?.type === 'contact' && s?.contact?.phone_number && (s.action === 'add' || s.action === 'remove')).map((s: any) => ({
+          action: s.action as 'add' | 'remove', phone: `+${s.contact.phone_number}`, fullName: s.contact.full_name, timestamp: new Date((Number(s.metadata?.timestamp) || Math.floor(Date.now() / 1000)) * 1000),
+        }));
+        if (items.length) events.push({ kind: 'contacts', phoneNumberId: String(v.metadata.phone_number_id), items });
         continue;
       }
       const phoneNumberId = v?.metadata?.phone_number_id;

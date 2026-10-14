@@ -23,6 +23,8 @@ import { QuotesService } from './modules/quotes/quotes.service';
 import { VehiclesController } from './modules/vehicles/vehicles.module';
 import { TemplatesController } from './modules/templates/templates.controller';
 import { TemplatesService } from './modules/templates/templates.service';
+import { EmbeddedSignupController } from './modules/whatsapp/embedded-signup.controller';
+import { EmbeddedSignupService } from './modules/whatsapp/embedded-signup.service';
 import { WhatsappAccountService } from './modules/whatsapp/whatsapp-account.service';
 import { InboundService, WebhooksController } from './modules/webhooks/webhooks.module';
 import { ProvidersModule } from './providers/providers.module';
@@ -52,11 +54,11 @@ class CoreModule {}
     DbModule, ProvidersModule, CoreModule, AuthModule,
   ],
   controllers: [
-    AgencyController, TemplatesController, PlatformController, VehiclesController, QuotesController, PublicQuoteController, InboxController, WebhooksController,
+    AgencyController, EmbeddedSignupController, TemplatesController, PlatformController, VehiclesController, QuotesController, PublicQuoteController, InboxController, WebhooksController,
     DashboardController, AnalyticsController, HealthController, MediaController, DevController,
   ],
   providers: [
-    PlatformService, WhatsappAccountService, TemplatesService, QuotesService, OutboundService, InboxService, InboundService, AiService, DashboardService, AnalyticsService, WorkerBootstrap,
+    PlatformService, WhatsappAccountService, EmbeddedSignupService, TemplatesService, QuotesService, OutboundService, InboxService, InboundService, AiService, DashboardService, AnalyticsService, WorkerBootstrap,
     { provide: APP_GUARD, useClass: ThrottlerGuard },
     { provide: APP_GUARD, useClass: CsrfGuard },
     { provide: APP_GUARD, useClass: AuthGuard },

@@ -196,9 +196,30 @@ export class WhatsappAccountService {
     });
   }
 
-  async applyAccountEvent(agencyId: string, e: { event: string; detail?: string }) {
+  /**
+   * Meta removed TripOS's access to this WABA (the business disconnected it in the WhatsApp Business app, went inactive, changed
+   * number, ...). The stored token is useless afterwards. An account onboarded through Embedded Signup becomes `disconnected` and its
+   * credential is erased; a manually connected account is only marked `degraded` and left untouched, because the admin should decide.
+   */
+  private async applyPartnerRemoved(agencyId: string, account: { id: string; onboardingMethod: string }, e: { disconnectionReason?: string; initiatedBy?: string }) {
+    const why = e.disconnectionReason ? ` (${e.disconnectionReason.toLowerCase().replace(/_/g, ' ')})` : '';
+    const reason = `Access was removed on the WhatsApp side${why}${e.initiatedBy === 'USER' ? ', by the business' : ''}. Connect again to resume.`;
+    const embedded = account.onboardingMethod === 'embedded';
+    await this.db.tenant(agencyId, async (tx) => {
+      await tx.whatsappAccount.update({
+        where: { id: account.id },
+        data: embedded
+          ? { connectionStatus: 'disconnected', statusReason: reason, credentialSecretRef: null, webhookSubscribed: false, lastErrorCode: 'PARTNER_REMOVED', lastErrorAt: new Date() }
+          : { connectionStatus: 'degraded', statusReason: reason, lastErrorCode: 'PARTNER_REMOVED', lastErrorAt: new Date() },
+      });
+      await audit(tx, { agencyId, actorUserId: null, action: 'whatsapp.partner_removed', entityType: 'whatsapp_account', entityId: account.id, metadata: { reason: e.disconnectionReason, initiatedBy: e.initiatedBy, onboardingMethod: account.onboardingMethod } });
+    });
+  }
+
+  async applyAccountEvent(agencyId: string, e: { event: string; detail?: string; disconnectionReason?: string; initiatedBy?: string }) {
     const account = await this.db.tenant(agencyId, (tx) => tx.whatsappAccount.findFirst({ where: { agencyId } }));
     if (!account || account.connectionStatus === 'disconnected') return;
+    if (e.event === 'PARTNER_REMOVED') return this.applyPartnerRemoved(agencyId, account, e);
     if (BAD_ACCOUNT_EVENT.test(e.event)) {
       await this.db.tenant(agencyId, (tx) => tx.whatsappAccount.update({ where: { id: account.id }, data: { connectionStatus: 'degraded', lastErrorCode: e.event, lastErrorAt: new Date(), statusReason: `Meta reported an account event: ${e.event}. Check Meta Business Manager.` } }));
     } else {

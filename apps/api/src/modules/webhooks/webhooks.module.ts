@@ -4,7 +4,7 @@ import { AssetService } from '../../common/assets';
 import { decryptSecret, safeEqual } from '../../common/crypto';
 import { Public } from '../../common/auth';
 import { config } from '../../config/config';
-import { Db } from '../../db/db.service';
+import { Db, Tx } from '../../db/db.service';
 import { WaEvent, WHATSAPP, WhatsAppProvider } from '../../providers/whatsapp/whatsapp';
 import { WhatsappAccountService } from '../whatsapp/whatsapp-account.service';
 
@@ -22,7 +22,7 @@ export class InboundService {
     let processed = 0, duplicates = 0, unknown = 0, ignored = 0;
     for (const e of events) {
       // Account-level events (templates, quality) identify the WABA, not the phone number.
-      const account = await this.db.system((tx) => (e.kind === 'message' || e.kind === 'status'
+      const account = await this.db.system((tx) => (e.kind !== 'template' && e.kind !== 'account'
         ? tx.whatsappAccount.findUnique({ where: { phoneNumberId: e.phoneNumberId } })
         : e.wabaId ? tx.whatsappAccount.findFirst({ where: { wabaId: e.wabaId } }) : Promise.resolve(null)));
       if (!account) { unknown++; this.log.warn(`Event for unknown WhatsApp account (${e.kind}) ignored`); continue; }
@@ -35,6 +35,13 @@ export class InboundService {
         if (e.kind === 'template') await this.accounts.applyTemplateEvent(account.agencyId, e);
         else await this.accounts.applyAccountEvent(account.agencyId, e);
         processed++;
+        continue;
+      }
+      if (e.kind === 'echo' || e.kind === 'history' || e.kind === 'contacts') {
+        // Coexistence data is only accepted for accounts that were onboarded as coexistence numbers.
+        if (!account.isCoexistence) { ignored++; continue; }
+        const n = e.kind === 'echo' ? await this.echo(account.agencyId, e) : e.kind === 'history' ? await this.history(account.agencyId, e) : await this.contacts(account.agencyId, e);
+        processed += n.processed; duplicates += n.duplicates; ignored += n.ignored;
         continue;
       }
       const res = e.kind === 'message' ? await this.inbound(account.agencyId, e, account.credentialSecretRef) : await this.status(account.agencyId, e);
@@ -83,6 +90,79 @@ export class InboundService {
       } catch (err) { this.log.warn(`Media fetch failed for ${e.mediaId}: ${(err as Error).message}`); }
     }
     return 'ok' as const;
+  }
+
+  // ------------------------------------------------------------------ coexistence (WhatsApp Business app + Cloud API)
+
+  private async conversationFor(tx: Tx, agencyId: string, phone: string) {
+    const customer = await tx.customer.upsert({
+      where: { agencyId_phoneE164: { agencyId, phoneE164: phone } }, update: {},
+      create: { agencyId, phoneE164: phone, name: phone },
+    });
+    return (await tx.conversation.findFirst({ where: { agencyId, customerId: customer.id }, orderBy: { lastMessageAt: 'desc' } }))
+      ?? tx.conversation.create({ data: { agencyId, customerId: customer.id } });
+  }
+
+  /** A message the business typed in the WhatsApp Business app. Recorded as outbound; never re-sent, and it does not open the 24 h window. */
+  private async echo(agencyId: string, e: Extract<WaEvent, { kind: 'echo' }>) {
+    // Edits and revocations of earlier messages are acknowledged but not applied (the original is kept as history).
+    if (e.action) return { processed: 0, duplicates: 0, ignored: 1 };
+    return this.db.tenant(agencyId, async (tx) => {
+      try { await tx.webhookEvent.create({ data: { agencyId, eventKey: `echo:${e.providerMessageId}` } }); }
+      catch (err: any) { if (err.code === 'P2002') return { processed: 0, duplicates: 1, ignored: 0 }; throw err; }
+      if (await tx.message.findFirst({ where: { agencyId, providerMessageId: e.providerMessageId }, select: { id: true } })) return { processed: 0, duplicates: 1, ignored: 0 };
+      const conv = await this.conversationFor(tx, agencyId, e.to);
+      await tx.message.create({
+        data: { agencyId, conversationId: conv.id, providerMessageId: e.providerMessageId, direction: 'outbound', type: e.type, text: e.text ?? null, status: 'sent', simulated: false, sentByUserId: null, createdAt: e.timestamp },
+      });
+      if (e.timestamp > conv.lastMessageAt) await tx.conversation.update({ where: { id: conv.id }, data: { lastMessageAt: e.timestamp } });
+      return { processed: 1, duplicates: 0, ignored: 0 };
+    });
+  }
+
+  /** Imported chat history. Idempotent per message; old messages never raise unread counts or re-open the service window. */
+  private async history(agencyId: string, e: Extract<WaEvent, { kind: 'history' }>) {
+    if (e.declined) {
+      // The business chose not to share history (Meta error 2593109) or the sync failed: record it, do not fail the webhook.
+      await this.db.tenant(agencyId, (tx) => tx.whatsappAccount.updateMany({ where: { agencyId }, data: { lastErrorCode: `history:${e.declined!.code}`, lastErrorAt: new Date() } }));
+      return { processed: 0, duplicates: 0, ignored: 1 };
+    }
+    let processed = 0, duplicates = 0;
+    for (const m of e.messages) {
+      const created = await this.db.tenant(agencyId, async (tx) => {
+        try { await tx.webhookEvent.create({ data: { agencyId, eventKey: `hist:${m.providerMessageId}` } }); }
+        catch (err: any) { if (err.code === 'P2002') return false; throw err; }
+        if (await tx.message.findFirst({ where: { agencyId, providerMessageId: m.providerMessageId }, select: { id: true } })) return false;
+        const conv = await this.conversationFor(tx, agencyId, m.customerPhone);
+        const status = m.direction === 'inbound' ? 'received' : ({ READ: 'read', DELIVERED: 'delivered', PLAYED: 'read', ERROR: 'failed' } as Record<string, string>)[m.status ?? ''] ?? 'sent';
+        await tx.message.create({ data: { agencyId, conversationId: conv.id, providerMessageId: m.providerMessageId, direction: m.direction, type: m.type, text: m.text ?? null, status, simulated: false, createdAt: m.timestamp } });
+        await tx.conversation.update({
+          where: { id: conv.id },
+          data: {
+            ...(m.timestamp > conv.lastMessageAt ? { lastMessageAt: m.timestamp } : {}),
+            ...(m.direction === 'inbound' && (!conv.lastInboundAt || m.timestamp > conv.lastInboundAt) ? { lastInboundAt: m.timestamp } : {}),
+          },
+        });
+        return true;
+      });
+      if (created) processed++; else duplicates++;
+    }
+    return { processed, duplicates, ignored: 0 };
+  }
+
+  /** Contacts added in the app become customers. Removals are acknowledged but never delete TripOS data, and existing names are kept. */
+  private async contacts(agencyId: string, e: Extract<WaEvent, { kind: 'contacts' }>) {
+    let processed = 0, ignored = 0, duplicates = 0;
+    for (const c of e.items) {
+      if (c.action === 'remove') { ignored++; continue; }
+      if (!(await this.firstTime(agencyId, `ctc:${c.phone}:${c.timestamp.getTime()}`))) { duplicates++; continue; }
+      await this.db.tenant(agencyId, (tx) => tx.customer.upsert({
+        where: { agencyId_phoneE164: { agencyId, phoneE164: c.phone } },
+        update: {}, create: { agencyId, phoneE164: c.phone, name: (c.fullName ?? c.phone).slice(0, 120) },
+      }));
+      processed++;
+    }
+    return { processed, duplicates, ignored };
   }
 
   private async status(agencyId: string, e: Extract<WaEvent, { kind: 'status' }>) {

@@ -11,6 +11,7 @@ import { config } from '../../config/config';
 import { Db } from '../../db/db.service';
 import { WHATSAPP, WhatsAppProvider } from '../../providers/whatsapp/whatsapp';
 import { InviteService } from '../auth/auth.module';
+import { whatsappStatusView } from '../whatsapp/status-view';
 import { WhatsappAccountService } from '../whatsapp/whatsapp-account.service';
 
 const hex = z.string().regex(/^#[0-9a-fA-F]{6}$/, 'Use a 6-digit hex colour');
@@ -160,15 +161,7 @@ export class AgencyController {
     return a ? this.statusView(a) : { connected: false, providerMode: this.wa.name };
   }
 
-  /** Never includes the credential itself, only whether one is stored. */
-  private statusView(a: any) {
-    return {
-      connected: a.connectionStatus !== 'disconnected', mode: a.mode, simulated: a.mode === 'simulator', phoneNumberId: a.phoneNumberId, wabaId: a.wabaId, displayName: a.displayName,
-      connectionStatus: a.connectionStatus, statusReason: a.statusReason, webhookSubscribed: a.webhookSubscribed, hasCredential: !!a.credentialSecretRef,
-      displayPhoneNumber: a.displayPhoneNumber, verifiedName: a.verifiedName, displayNameStatus: a.displayNameStatus, qualityRating: a.qualityRating, messagingLimitTier: a.messagingLimitTier,
-      subscribedAt: a.subscribedAt, lastWebhookAt: a.lastWebhookAt, lastCheckedAt: a.lastCheckedAt, lastErrorCode: a.lastErrorCode, lastErrorAt: a.lastErrorAt,
-    };
-  }
+  private statusView(a: any) { return whatsappStatusView(a); }
 
   @Post('whatsapp/connect')
   async connectWhatsapp(@CurrentUser() p: Principal, @Body() body: unknown) {
