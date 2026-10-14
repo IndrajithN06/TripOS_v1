@@ -2,6 +2,7 @@
 import { useState } from 'react';
 import { api, useApi } from '@/lib/api';
 import { fmtDateTime, inr } from '@/lib/format';
+import { EmbeddedSignup } from '@/components/EmbeddedSignup';
 import { TemplateManager } from '@/components/TemplateBuilder';
 import { ErrorBox, Field, Loading, SimTag, StatusBadge, useAction, useMe, useRefreshMe } from '@/components/ui';
 
@@ -128,7 +129,8 @@ function WhatsApp() {
           </div>
         </>
       ) : <div className="muted">Not connected.</div>}
-      <h3>{data.connected ? 'Reconnect' : 'Connect'}</h3>
+      {me.environment.whatsappEmbeddedSignup && <EmbeddedSignup existingLive={!!data.connected} onDone={() => { void refreshMe(); reload(); }} />}
+      <h3>{me.environment.whatsappEmbeddedSignup ? 'Manual connection (fallback)' : data.connected ? 'Reconnect' : 'Connect'}</h3>
       {cloud && <div className="small muted">Complete Meta Embedded Signup, then paste the WABA ID, phone number ID and a system-user access token. The token is encrypted at rest and never shown again.</div>}
       <Field label="Display name"><input value={f.displayName} onChange={(e) => setF({ ...f, displayName: e.target.value })} /></Field>
       {cloud && <div className="fields"><Field label="WABA ID"><input value={f.wabaId} onChange={(e) => setF({ ...f, wabaId: e.target.value })} /></Field><Field label="Phone number ID"><input value={f.phoneNumberId} onChange={(e) => setF({ ...f, phoneNumberId: e.target.value })} /></Field><Field label="Access token"><input type="password" autoComplete="off" value={f.accessToken} onChange={(e) => setF({ ...f, accessToken: e.target.value })} /></Field></div>}
