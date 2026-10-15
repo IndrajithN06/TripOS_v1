@@ -2,7 +2,8 @@ import 'reflect-metadata';
 import { INestApplication, Logger } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import cookieParser from 'cookie-parser';
-import { json, urlencoded } from 'express';
+import { urlencoded } from 'express';
+import { installJsonParsers } from './common/body-parsers';
 import helmet from 'helmet';
 import { AppModule } from './app.module';
 import { config } from './config/config';
@@ -11,7 +12,7 @@ import { config } from './config/config';
 export function configureApp<T extends INestApplication>(app: T): T {
   const cfg = config();
   // Raw body is kept for WhatsApp webhook signature verification.
-  app.use(json({ limit: '1mb', verify: (req: any, _res, buf) => { req.rawBody = buf; } }));
+  installJsonParsers(app, cfg.WHATSAPP_WEBHOOK_MAX_BODY_BYTES);
   app.use(urlencoded({ extended: false, limit: '100kb' }));
   app.use(cookieParser());
   app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' } }));

@@ -11,7 +11,7 @@ import { FakeCloud } from './fake-cloud';
 import { Client, onboard, superAdmin, Tenant, uid } from './helpers';
 
 // WhatsApp Business app coexistence webhooks (message echoes, history, contacts, PARTNER_REMOVED) against a FAKE Meta.
-const FLAG = ['WHATSAPP_EMBEDDED_SIGNUP_ENABLED', 'WHATSAPP_APP_ID', 'WHATSAPP_EMBEDDED_SIGNUP_CONFIG_ID'] as const;
+const FLAG = ['WHATSAPP_EMBEDDED_SIGNUP_ENABLED', 'WHATSAPP_APP_ID', 'WHATSAPP_SIGNUP_APP_ID', 'WHATSAPP_SIGNUP_APP_SECRET', 'WHATSAPP_SIGNUP_VERIFY_TOKEN', 'WHATSAPP_EMBEDDED_SIGNUP_CONFIG_ID'] as const;
 const saved: Record<string, string | undefined> = {};
 
 describe('Coexistence webhooks, fake Meta', () => {
@@ -20,7 +20,14 @@ describe('Coexistence webhooks, fake Meta', () => {
   let M: Tenant & { waba: string; phone: string }; // connected manually
   let C2: Tenant & { waba: string; phone: string }; // a second coexistence agency, for isolation
 
-  const hook = (body: object) => request(app.getHttpServer()).post('/webhooks/whatsapp').send(body);
+  // Embedded Signup accounts belong to the signup Meta app: their webhooks are delivered to (and authenticated by) /webhooks/whatsapp/signup.
+  // Manual accounts belong to the primary app: /webhooks/whatsapp. (The fake provider here does not check signatures; see two-app-webhooks.)
+  const signupIds = new Set<string>();
+  const routeFor = (body: any) => {
+    const entry = body?.entry?.[0], v = entry?.changes?.[0]?.value;
+    return [entry?.id, v?.waba_info?.waba_id, v?.metadata?.phone_number_id].some((x) => x && signupIds.has(x)) ? '/webhooks/whatsapp/signup' : '/webhooks/whatsapp';
+  };
+  const hook = (body: object) => request(app.getHttpServer()).post(routeFor(body)).send(body);
   const wrap = (phone: string, waba: string, field: string, value: object, extra: object = {}) =>
     ({ object: 'whatsapp_business_account', entry: [{ id: waba, time: Math.floor(Date.now() / 1000), changes: [{ field, value: { messaging_product: 'whatsapp', metadata: { display_phone_number: '919800000000', phone_number_id: phone }, ...value } }], ...extra }] });
   const echo = (t: { phone: string; waba: string }, to: string, id = `wamid.E-${uid()}`, over: object = {}) =>
@@ -37,12 +44,13 @@ describe('Coexistence webhooks, fake Meta', () => {
     const st = await T.admin.post('/agency/whatsapp/embedded/start', {});
     const r = await T.admin.post('/agency/whatsapp/embedded/complete', { attemptId: st.body.attemptId, state: st.body.state, code, event: { type: 'FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING', wabaId: waba, phoneNumberId: phone }, displayName: `${label} line` });
     if (r.status !== 201) throw new Error(`coexistence onboarding failed ${JSON.stringify(r.body)}`);
+    signupIds.add(waba); signupIds.add(phone);
     return Object.assign(T, { waba, phone });
   }
 
   beforeAll(async () => {
     for (const k of FLAG) saved[k] = process.env[k];
-    Object.assign(process.env, { WHATSAPP_EMBEDDED_SIGNUP_ENABLED: 'true', WHATSAPP_APP_ID: 'test-app-id', WHATSAPP_EMBEDDED_SIGNUP_CONFIG_ID: 'test-config-id' });
+    Object.assign(process.env, { WHATSAPP_EMBEDDED_SIGNUP_ENABLED: 'true', WHATSAPP_APP_ID: 'test-primary-app', WHATSAPP_SIGNUP_APP_ID: 'test-signup-app', WHATSAPP_SIGNUP_APP_SECRET: 'test-signup-secret', WHATSAPP_SIGNUP_VERIFY_TOKEN: 'test-signup-verify', WHATSAPP_EMBEDDED_SIGNUP_CONFIG_ID: 'test-config-id' });
     resetConfigForTests();
     fake = new FakeCloud();
     const mod = await Test.createTestingModule({ imports: [AppModule] }).overrideProvider(WHATSAPP).useValue(fake).compile();

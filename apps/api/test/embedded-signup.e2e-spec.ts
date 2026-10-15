@@ -11,7 +11,7 @@ import { FakeCloud } from './fake-cloud';
 import { Client, onboard, superAdmin, Tenant, uid } from './helpers';
 
 // Embedded Signup v4 + coexistence against a FAKE Meta. Nothing here can reach the real service: the provider is replaced.
-const FLAG = ['WHATSAPP_EMBEDDED_SIGNUP_ENABLED', 'WHATSAPP_APP_ID', 'WHATSAPP_EMBEDDED_SIGNUP_CONFIG_ID'] as const;
+const FLAG = ['WHATSAPP_EMBEDDED_SIGNUP_ENABLED', 'WHATSAPP_APP_ID', 'WHATSAPP_SIGNUP_APP_ID', 'WHATSAPP_SIGNUP_APP_SECRET', 'WHATSAPP_SIGNUP_VERIFY_TOKEN', 'WHATSAPP_EMBEDDED_SIGNUP_CONFIG_ID'] as const;
 const saved: Record<string, string | undefined> = {};
 
 describe('WhatsApp Embedded Signup (coexistence), fake Meta', () => {
@@ -28,7 +28,10 @@ describe('WhatsApp Embedded Signup (coexistence), fake Meta', () => {
   };
   const setFlag = (on: boolean) => {
     process.env.WHATSAPP_EMBEDDED_SIGNUP_ENABLED = on ? 'true' : 'false';
-    process.env.WHATSAPP_APP_ID = 'test-app-id';
+    process.env.WHATSAPP_APP_ID = 'test-primary-app'; // required whenever any WHATSAPP_SIGNUP_* value is set
+    process.env.WHATSAPP_SIGNUP_APP_ID = 'test-signup-app';
+    process.env.WHATSAPP_SIGNUP_APP_SECRET = 'test-signup-secret';
+    process.env.WHATSAPP_SIGNUP_VERIFY_TOKEN = 'test-signup-verify';
     process.env.WHATSAPP_EMBEDDED_SIGNUP_CONFIG_ID = 'test-config-id';
     resetConfigForTests();
   };
@@ -68,7 +71,7 @@ describe('WhatsApp Embedded Signup (coexistence), fake Meta', () => {
     it('is reported to the web app when enabled', async () => {
       const T = await newTenant('FlagOn');
       expect((await T.admin.get('/me')).body.environment.whatsappEmbeddedSignup).toBe(true);
-      expect((await T.admin.get(base)).body).toMatchObject({ enabled: true, appId: 'test-app-id', configId: 'test-config-id', blockedByExistingConnection: false });
+      expect((await T.admin.get(base)).body).toMatchObject({ enabled: true, appId: 'test-signup-app', configId: 'test-config-id', blockedByExistingConnection: false });
     });
   });
 
@@ -106,6 +109,7 @@ describe('WhatsApp Embedded Signup (coexistence), fake Meta', () => {
       expect(row?.credentialSecretRef).not.toContain('EAAG');
       expect(decryptSecret(row!.credentialSecretRef!)).toBe(`EAAG-business-${w.code}`);
       expect(row).toMatchObject({ onboardingMethod: 'embedded', isCoexistence: true, businessId: 'BIZ-1', connectedByUserId: T.adminId });
+      expect(row?.metaAppId).toBe('test-signup-app'); // recorded only on a successful commit
       const a = await attemptRow(T.agencyId, done.body.attempt.id);
       expect(a).toMatchObject({ status: 'completed', step: 'done', tokenRef: null });
       const audits = await db.tenant(T.agencyId, (tx) => tx.auditLog.findMany({ where: { agencyId: T.agencyId, action: 'whatsapp.connected' } }));
@@ -190,7 +194,7 @@ describe('WhatsApp Embedded Signup (coexistence), fake Meta', () => {
       const first = await signup(T, w);
       expect(first.done.status).toBe(400);
       expect(first.done.body.error).toMatchObject({ retryable: true });
-      expect(await acct(T.agencyId)).toBeNull(); // nothing half-connected
+      expect(await acct(T.agencyId)).toBeNull(); // nothing half-connected, so no app id recorded either
       const mid = await attemptRow(T.agencyId, first.st.body.attemptId);
       expect(mid.status).toBe('failed');
       expect(mid.failedStep).toBe('subscribe');
@@ -332,6 +336,17 @@ describe('WhatsApp Embedded Signup (coexistence), fake Meta', () => {
   });
 
   describe('connection preservation (no overwrite)', () => {
+    it('a pasted token cannot replace a LIVE Embedded Signup account (409), and nothing about it changes', async () => {
+      const T = await newTenant('NoManualOver'), w = ids();
+      expect((await signup(T, w)).done.status).toBe(201);
+      const before = await acct(T.agencyId);
+      const r = await T.admin.post('/agency/whatsapp/connect', { displayName: 'Manual line', wabaId: `WABA-${uid()}`, phoneNumberId: `PN-${uid()}`, accessToken: 'EAAG-manual-token-value' });
+      expect(r.status).toBe(409);
+      expect(r.body.error.code).toBe('embedded_account_active');
+      const after = await acct(T.agencyId);
+      expect(after).toMatchObject({ onboardingMethod: 'embedded', isCoexistence: true, metaAppId: 'test-signup-app', phoneNumberId: before!.phoneNumberId, credentialSecretRef: before!.credentialSecretRef, connectionStatus: 'connected' });
+    });
+
     it('refuses to start while a connection is live, and leaves it untouched', async () => {
       const T = await newTenant('Keep'), w = ids();
       expect((await signup(T, w)).done.status).toBe(201);
@@ -360,6 +375,7 @@ describe('WhatsApp Embedded Signup (coexistence), fake Meta', () => {
       expect(after?.credentialSecretRef).toBe(before?.credentialSecretRef);
       expect(decryptSecret(after!.credentialSecretRef!)).toBe('EAAG-manual-token-value');
       expect(after).toMatchObject({ phoneNumberId: manual.phoneNumberId, wabaId: manual.wabaId, onboardingMethod: 'manual', isCoexistence: false });
+      expect(after?.metaAppId).toBeNull(); // a pasted token is never attributed to the signup app
       expect((await attemptRow(T.agencyId, st.body.attemptId))).toMatchObject({ status: 'failed_permanent', tokenRef: null }); // the unused token is dropped
     });
 
@@ -375,7 +391,8 @@ describe('WhatsApp Embedded Signup (coexistence), fake Meta', () => {
       // manual fallback still replaces/updates as before
       const manual = await T.admin.post('/agency/whatsapp/connect', { displayName: 'Manual line', wabaId: `WABA-${uid()}`, phoneNumberId: `PN-${uid()}`, accessToken: 'EAAG-manual-token-value' });
       expect(manual.status).toBe(201);
-      expect(manual.body).toMatchObject({ mode: 'cloud', connected: true });
+      expect(manual.body).toMatchObject({ mode: 'cloud', connected: true, onboardingMethod: 'manual', coexistence: false });
+      expect((await acct(T.agencyId))).toMatchObject({ onboardingMethod: 'manual', isCoexistence: false, businessId: null, metaAppId: null });
     });
   });
 });

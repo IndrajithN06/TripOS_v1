@@ -106,6 +106,7 @@ model WhatsappAccount {
   isCoexistence       Boolean  @default(false) // number is also used in the WhatsApp Business app
   businessId          String?
   connectedByUserId   String?  @db.Uuid
+  metaAppId           String? // Meta app that issued the stored token; NULL = the primary (original Cloud API) app
 
   @@index([wabaId])
 }
@@ -124,6 +125,7 @@ model WhatsappSignupAttempt {
   wabaId        String?
   phoneNumberId String?
   businessId    String?
+  signupAppId   String? // Meta app that issued the stored token (the signup app configured at exchange time)
   requestSync   Boolean   @default(false)
   syncStatus    String? // requested | failed
   failedStep    String?

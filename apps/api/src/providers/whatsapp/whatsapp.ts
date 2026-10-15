@@ -1,7 +1,8 @@
-import { createHmac } from 'crypto';
 import { config } from '../../config/config';
-import { safeEqual } from '../../common/crypto';
+import { accountAppKey, appIdForAccount, AppKey } from './app-identity';
+import { metaApps } from './meta-apps';
 import { classifyMetaError, WaErrorKind } from './meta-errors';
+import { verifyMetaSignature } from './signature';
 
 export interface WaAccount {
   phoneNumberId: string;
@@ -9,6 +10,11 @@ export interface WaAccount {
   wabaId?: string;
   /** Decrypted access token (cloud only). */
   token?: string;
+  /**
+   * The Meta app that issued `token` (WhatsappAccount.metaAppId). Undefined means the primary (original Cloud API) app.
+   * Only used for operations that are specific to an app, such as the template-header upload session.
+   */
+  appId?: string;
 }
 
 export interface WaSendResult { providerMessageId: string; simulated: boolean }
@@ -59,7 +65,8 @@ export interface WhatsAppProvider {
   sendImage(a: WaAccount, to: string, f: { data: Buffer; mimeType: string; caption?: string }): Promise<WaSendResult>;
   sendTemplate(a: WaAccount, to: string, t: TemplateSend): Promise<WaSendResult>;
   downloadMedia(a: WaAccount, mediaId: string): Promise<{ data: Buffer; mimeType: string }>;
-  verifySignature(rawBody: Buffer, signatureHeader: string | undefined): boolean;
+  /** `app` selects WHICH app's secret the signature must match. It defaults to the primary app and never means "either". */
+  verifySignature(rawBody: Buffer, signatureHeader: string | undefined, app?: AppKey): boolean;
   parseWebhook(body: any): WaEvent[];
   /** Validates the credentials and returns the number's health. Throws WaSendError(kind 'auth') on a bad token. */
   getPhoneInfo(a: WaAccount): Promise<WaPhoneInfo>;
@@ -278,10 +285,15 @@ export class CloudWhatsApp implements WhatsAppProvider {
 
   /**
    * Meta's Resumable Upload API: create an upload session on the APP (not the WABA), then send the bytes.
-   * The returned handle goes into the template's `example.header_handle`. Needs WHATSAPP_APP_ID.
+   * The returned handle goes into the template's `example.header_handle`. The session must be created on the app that ISSUED the
+   * token: the account's own app id, or (legacy accounts, no app recorded) the primary WHATSAPP_APP_ID. Never the other app.
    */
   async uploadTemplateExample(a: WaAccount, f: { data: Buffer; mimeType: string; filename: string }) {
-    const appId = config().WHATSAPP_APP_ID;
+    const apps = metaApps();
+    if (a.appId && accountAppKey(a.appId, apps) === null) {
+      throw new WaSendError('This account was connected through a Meta app that is not configured on this server', 'unknown_app', false, 'account');
+    }
+    const appId = appIdForAccount(a.appId, apps);
     if (!appId) throw new WaSendError('WHATSAPP_APP_ID must be set in the API environment to submit templates with an image or document header', 'no_app_id', false, 'account');
     const qs = new URLSearchParams({ file_name: f.filename, file_length: String(f.data.length), file_type: f.mimeType });
     const session = await this.graph(a, `${appId}/uploads?${qs}`, { method: 'POST' });
@@ -297,8 +309,10 @@ export class CloudWhatsApp implements WhatsAppProvider {
    * about 30 seconds and is single use). The app secret never leaves the server and errors never echo the request URL.
    */
   async exchangeSignupCode(code: string): Promise<WaExchangedToken> {
-    const { WHATSAPP_APP_ID: clientId, WHATSAPP_APP_SECRET: clientSecret } = config();
-    if (!clientId || !clientSecret) throw new WaSendError('Embedded Signup is not configured on the server (app id and secret)', 'not_configured', false, 'account');
+    // ONLY the Embedded Signup app's credentials: a code issued by that app's popup cannot be exchanged by any other app, and
+    // there is deliberately no fallback to the primary app's id or secret.
+    const { WHATSAPP_SIGNUP_APP_ID: clientId, WHATSAPP_SIGNUP_APP_SECRET: clientSecret } = config();
+    if (!clientId || !clientSecret) throw new WaSendError('Embedded Signup is not configured on the server (signup app id and secret)', 'not_configured', false, 'account');
     let res: Response;
     try {
       res = await fetch(`${this.base}/oauth/access_token?${new URLSearchParams({ client_id: clientId, client_secret: clientSecret, code })}`, { signal: AbortSignal.timeout(20000) });
@@ -335,10 +349,9 @@ export class CloudWhatsApp implements WhatsAppProvider {
     await this.call(a, 'smb_app_data', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ messaging_product: 'whatsapp', sync_type: syncType }) });
   }
 
-  verifySignature(rawBody: Buffer, header: string | undefined) {
-    const secret = config().WHATSAPP_APP_SECRET;
-    if (!secret || !header?.startsWith('sha256=')) return false;
-    return safeEqual(header.slice(7), createHmac('sha256', secret).update(rawBody).digest('hex'));
+  verifySignature(rawBody: Buffer, header: string | undefined, app: AppKey = 'primary') {
+    const c = config();
+    return verifyMetaSignature(rawBody, header, app === 'signup' ? c.WHATSAPP_SIGNUP_APP_SECRET : c.WHATSAPP_APP_SECRET);
   }
   parseWebhook(body: any) { return parseCloudPayload(body); }
 }

@@ -26,18 +26,23 @@ import { TemplatesService } from './modules/templates/templates.service';
 import { EmbeddedSignupController } from './modules/whatsapp/embedded-signup.controller';
 import { EmbeddedSignupService } from './modules/whatsapp/embedded-signup.service';
 import { WhatsappAccountService } from './modules/whatsapp/whatsapp-account.service';
-import { InboundService, WebhooksController } from './modules/webhooks/webhooks.module';
+import { InboundService, SignupWebhooksController, WebhooksController } from './modules/webhooks/webhooks.module';
 import { ProvidersModule } from './providers/providers.module';
 
 @Injectable()
 class WorkerBootstrap implements OnApplicationBootstrap {
-  constructor(private readonly jobs: JobsService, private readonly quotes: QuotesService, private readonly whatsapp: WhatsappAccountService) {}
+  constructor(private readonly jobs: JobsService, private readonly quotes: QuotesService, private readonly whatsapp: WhatsappAccountService, private readonly signup: EmbeddedSignupService) {}
   onApplicationBootstrap() {
     // Retry only what is still failing; items already sent are skipped by idempotency in execute().
     this.jobs.register('quote.retry', async (j) => { await this.quotes.execute(j.agencyId, j.payload.versionId, null, { auto: true }); });
+    // Flag (never disconnect) any account tied to a Meta app that is not configured here, and say so if the migration is missing.
+    if (config().NODE_ENV !== 'test') void this.whatsapp.auditAppIdentitiesSafely();
     if (config().NODE_ENV !== 'test' && process.env.JOBS_WORKER !== 'false') {
       this.jobs.start();
       setInterval(() => void this.quotes.expireOverdue().catch(() => undefined), 10 * 60 * 1000).unref();
+      // Forget the encrypted token of any sign-up attempt that is past its deadline (same in-process timer pattern as above; idempotent).
+      void this.signup.sweepExpiredAttemptsSafely();
+      setInterval(() => void this.signup.sweepExpiredAttemptsSafely(), 5 * 60 * 1000).unref();
       // Real WhatsApp only: re-check token validity, quality rating and limits for every connected number.
       if (config().WHATSAPP_PROVIDER === 'cloud') setInterval(() => void this.whatsapp.checkAll().catch(() => undefined), 15 * 60 * 1000).unref();
     }
@@ -54,7 +59,7 @@ class CoreModule {}
     DbModule, ProvidersModule, CoreModule, AuthModule,
   ],
   controllers: [
-    AgencyController, EmbeddedSignupController, TemplatesController, PlatformController, VehiclesController, QuotesController, PublicQuoteController, InboxController, WebhooksController,
+    AgencyController, EmbeddedSignupController, TemplatesController, PlatformController, VehiclesController, QuotesController, PublicQuoteController, InboxController, WebhooksController, SignupWebhooksController,
     DashboardController, AnalyticsController, HealthController, MediaController, DevController,
   ],
   providers: [

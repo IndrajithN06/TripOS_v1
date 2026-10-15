@@ -1,3 +1,5 @@
+import { AppKey } from '../src/providers/whatsapp/app-identity';
+import { verifyMetaSignature } from '../src/providers/whatsapp/signature';
 import {
   parseCloudPayload, TemplateSend, WaAccount, WaPhoneInfo, WaRemoteTemplate, WaSendError, WaSendResult, WhatsAppProvider,
 } from '../src/providers/whatsapp/whatsapp';
@@ -36,7 +38,7 @@ export class FakeCloud implements WhatsAppProvider {
   async sendImage() { return this.send('image'); }
   async sendTemplate(_a: WaAccount, _to: string, t: TemplateSend) { this.templateSends.push(t); return this.send('template'); }
   async downloadMedia() { return { data: Buffer.from('x'), mimeType: 'image/png' }; }
-  verifySignature() { return true; }
+  verifySignature(_raw?: Buffer, _header?: string, _app?: string): boolean { return true; }
   parseWebhook(b: any) { return parseCloudPayload(b); }
   async getPhoneInfo(_a: WaAccount) { if (this.infoError) throw this.infoError; return this.phoneInfo; }
   async subscribeWebhooks(a?: WaAccount) { this.attempted.push('subscribe'); if (this.subscribeError) throw this.subscribeError; this.subscribed.push(a?.wabaId ?? ''); }
@@ -98,3 +100,13 @@ export class FakeCloud implements WhatsAppProvider {
 
 export const authError = () => new WaSendError('Error validating access token: Session has expired', '190', false, 'auth');
 export const rateLimitError = () => new WaSendError('Throughput limit reached', '130429', true, 'rate_limit');
+
+/**
+ * Same fake Meta, but webhook signatures are REALLY verified (HMAC-SHA256 of the raw body) against the secret of the app the
+ * route belongs to. Reads the secrets from the environment at call time, exactly like the production provider's config does.
+ */
+export class SignedFakeCloud extends FakeCloud {
+  verifySignature(raw?: Buffer, header?: string, app: AppKey | string = 'primary'): boolean {
+    return verifyMetaSignature(raw ?? Buffer.from(''), header, app === 'signup' ? process.env.WHATSAPP_SIGNUP_APP_SECRET : process.env.WHATSAPP_APP_SECRET);
+  }
+}

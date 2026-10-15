@@ -21,6 +21,10 @@ export class AllExceptionsFilter implements ExceptionFilter {
     } else if (ex instanceof PricingError) {
       status = 422;
       body = { code: 'pricing_error', message: ex.message };
+    } else if ((ex as any)?.type === 'entity.too.large') {
+      status = 413;
+      body = { code: 'payload_too_large', message: 'The request body is too large' };
+      this.log.error(`${req.method} ${String(req.url).split('?')[0]}: body of ${req.headers?.['content-length'] ?? 'unknown'} bytes exceeds the limit`);
     } else if ((ex as any)?.code === 'P2002') {
       status = 409;
       body = { code: 'conflict', message: 'A record with these details already exists' };

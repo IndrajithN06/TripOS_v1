@@ -1,32 +1,36 @@
 import { resetConfigForTests, validateConfig } from '../../config/config';
+import { metaSignatureHeader } from './signature';
 import { CloudWhatsApp, parseCloudPayload, SimulatorWhatsApp, WaSendError } from './whatsapp';
 
 // MOCKED HTTP shaped like Meta's documented Embedded Signup / coexistence requests and webhooks (developers.facebook.com, Oct 2026).
 // These prove our request/response handling, not that the live service behaves identically.
 const acct = { phoneNumberId: 'PN1', wabaId: 'WABA1', token: 'business-token-123' };
-const SECRET = 'app-secret-do-not-leak';
+const SECRET = 'primary-app-secret-do-not-leak'; // the existing Cloud API app
+const SIGNUP_SECRET = 'signup-app-secret-do-not-leak'; // the Embedded Signup app
 let fetchMock: jest.SpyInstance;
 const reply = (status: number, body: unknown) => Promise.resolve(new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } }));
 const failure = (p: Promise<unknown>) => p.then(() => { throw new Error('expected the call to fail'); }, (e) => e as WaSendError);
 const call = (n = 0) => ({ url: String(fetchMock.mock.calls[n][0]), init: (fetchMock.mock.calls[n][1] ?? {}) as RequestInit });
 
 beforeAll(() => {
-  Object.assign(process.env, { DATABASE_URL: 'x', SESSION_SECRET: 'unit-test-session-secret-0123456789', APP_ENCRYPTION_KEY: 'unit-test-encryption-key-0123456789', WHATSAPP_API_BASE_URL: 'https://graph.test/v99.0', WHATSAPP_APP_ID: 'APP123', WHATSAPP_APP_SECRET: SECRET, WHATSAPP_PROVIDER: 'cloud', WHATSAPP_VERIFY_TOKEN: 'unit-verify-token' });
+  Object.assign(process.env, { DATABASE_URL: 'x', SESSION_SECRET: 'unit-test-session-secret-0123456789', APP_ENCRYPTION_KEY: 'unit-test-encryption-key-0123456789', WHATSAPP_API_BASE_URL: 'https://graph.test/v99.0', WHATSAPP_APP_ID: 'APP123', WHATSAPP_APP_SECRET: SECRET, WHATSAPP_PROVIDER: 'cloud', WHATSAPP_VERIFY_TOKEN: 'unit-verify-token', WHATSAPP_SIGNUP_APP_ID: 'SIGNUPAPP', WHATSAPP_SIGNUP_APP_SECRET: SIGNUP_SECRET, WHATSAPP_SIGNUP_VERIFY_TOKEN: 'unit-signup-verify' });
   resetConfigForTests();
 });
 beforeEach(() => { fetchMock = jest.spyOn(global, 'fetch'); });
 afterEach(() => fetchMock.mockRestore());
-afterAll(() => { for (const k of ['WHATSAPP_APP_ID', 'WHATSAPP_APP_SECRET', 'WHATSAPP_PROVIDER', 'WHATSAPP_VERIFY_TOKEN']) delete process.env[k]; resetConfigForTests(); });
+afterAll(() => { for (const k of ['WHATSAPP_APP_ID', 'WHATSAPP_APP_SECRET', 'WHATSAPP_PROVIDER', 'WHATSAPP_VERIFY_TOKEN', 'WHATSAPP_SIGNUP_APP_ID', 'WHATSAPP_SIGNUP_APP_SECRET', 'WHATSAPP_SIGNUP_VERIFY_TOKEN']) delete process.env[k]; resetConfigForTests(); });
 
 describe('Embedded Signup requests (Cloud provider)', () => {
-  it('exchanges the code server-side with the app id and secret, without a bearer header', async () => {
+  it('exchanges the code server-side with the SIGNUP app id and secret only (never the primary app), without a bearer header', async () => {
     fetchMock.mockReturnValueOnce(reply(200, { access_token: 'tok-abc', token_type: 'bearer' }));
     const r = await new CloudWhatsApp().exchangeSignupCode('the-code');
     expect(r).toEqual({ accessToken: 'tok-abc' });
     const { url, init } = call();
     const u = new URL(url);
     expect(u.origin + u.pathname).toBe('https://graph.test/v99.0/oauth/access_token');
-    expect(Object.fromEntries(u.searchParams)).toEqual({ client_id: 'APP123', client_secret: SECRET, code: 'the-code' });
+    expect(Object.fromEntries(u.searchParams)).toEqual({ client_id: 'SIGNUPAPP', client_secret: SIGNUP_SECRET, code: 'the-code' });
+    expect(url).not.toContain(SECRET); // the primary app's secret is never sent for a signup code
+    expect(url).not.toContain('APP123');
     expect(init.method ?? 'GET').toBe('GET');
     expect(JSON.stringify(init.headers ?? {})).not.toMatch(/authorization/i);
   });
@@ -37,24 +41,29 @@ describe('Embedded Signup requests (Cloud provider)', () => {
     expect(e).toBeInstanceOf(WaSendError);
     expect(e.kind).toBe('auth');
     expect(e.retryable).toBe(false);
+    expect(JSON.stringify({ m: e.message, c: e.code })).not.toContain(SIGNUP_SECRET);
     expect(JSON.stringify({ m: e.message, c: e.code })).not.toContain(SECRET);
   });
 
   it('reports a network failure without echoing the request URL (which carries the secret)', async () => {
-    fetchMock.mockRejectedValueOnce(new Error(`connect ECONNREFUSED https://graph.test/v99.0/oauth/access_token?client_secret=${SECRET}`));
+    fetchMock.mockRejectedValueOnce(new Error(`connect ECONNREFUSED https://graph.test/v99.0/oauth/access_token?client_secret=${SIGNUP_SECRET}`));
     const e = await failure(new CloudWhatsApp().exchangeSignupCode('c'));
     expect(e.kind).toBe('transient');
-    expect(e.message).not.toContain(SECRET);
+    expect(e.message).not.toContain(SIGNUP_SECRET);
     expect(e.message).not.toContain('graph.test');
   });
 
-  it('refuses to exchange when the app id or secret is not configured, without calling Meta', async () => {
-    // (Under the cloud provider the config itself already requires the secret; this guards the adapter independently.)
-    delete process.env.WHATSAPP_APP_SECRET; process.env.WHATSAPP_PROVIDER = 'simulator'; resetConfigForTests();
+  it('refuses to exchange when the signup app is not configured and does NOT fall back to the primary app', async () => {
+    // The primary app id/secret stay configured on purpose: they must never be borrowed for a signup code.
+    for (const k of ['WHATSAPP_SIGNUP_APP_ID', 'WHATSAPP_SIGNUP_APP_SECRET', 'WHATSAPP_SIGNUP_VERIFY_TOKEN']) delete process.env[k];
+    resetConfigForTests();
     try {
       await expect(new CloudWhatsApp().exchangeSignupCode('c')).rejects.toMatchObject({ code: 'not_configured' });
       expect(fetchMock).not.toHaveBeenCalled();
-    } finally { process.env.WHATSAPP_APP_SECRET = SECRET; process.env.WHATSAPP_PROVIDER = 'cloud'; resetConfigForTests(); }
+    } finally {
+      Object.assign(process.env, { WHATSAPP_SIGNUP_APP_ID: 'SIGNUPAPP', WHATSAPP_SIGNUP_APP_SECRET: SIGNUP_SECRET, WHATSAPP_SIGNUP_VERIFY_TOKEN: 'unit-signup-verify' });
+      resetConfigForTests();
+    }
   });
 
   it('fails clearly if Meta answers 200 without a token', async () => {
@@ -86,6 +95,69 @@ describe('Embedded Signup requests (Cloud provider)', () => {
     expect(call(0).init.method).toBe('POST');
     expect(JSON.parse(call(0).init.body as string)).toEqual({ messaging_product: 'whatsapp', sync_type: 'smb_app_state_sync' });
     expect(JSON.parse(call(1).init.body as string)).toEqual({ messaging_product: 'whatsapp', sync_type: 'history' });
+  });
+});
+
+describe('app-specific operations use the app that issued the token', () => {
+  const file = { data: Buffer.from('12345'), mimeType: 'image/png', filename: 'x.png' };
+  const sessions = () => { fetchMock.mockReturnValueOnce(reply(200, { id: 'upload:1' })).mockReturnValueOnce(reply(200, { h: '4::handle' })); };
+  const restoreSignup = () => { Object.assign(process.env, { WHATSAPP_SIGNUP_APP_ID: 'SIGNUPAPP', WHATSAPP_SIGNUP_APP_SECRET: SIGNUP_SECRET, WHATSAPP_SIGNUP_VERIFY_TOKEN: 'unit-signup-verify' }); resetConfigForTests(); };
+  const dropSignup = () => { for (const k of ['WHATSAPP_SIGNUP_APP_ID', 'WHATSAPP_SIGNUP_APP_SECRET', 'WHATSAPP_SIGNUP_VERIFY_TOKEN']) delete process.env[k]; resetConfigForTests(); };
+
+  it('template-header upload for a legacy account (no app recorded) uses the PRIMARY app', async () => {
+    sessions();
+    expect(await new CloudWhatsApp().uploadTemplateExample(acct, file)).toBe('4::handle');
+    expect(call(0).url).toContain('/APP123/uploads?');
+    expect(call(0).url).not.toContain('SIGNUPAPP');
+  });
+  it('template-header upload for a signup account uses the SIGNUP app, not the primary one', async () => {
+    sessions();
+    await new CloudWhatsApp().uploadTemplateExample({ ...acct, appId: 'SIGNUPAPP' }, file);
+    expect(call(0).url).toContain('/SIGNUPAPP/uploads?');
+    expect(call(0).url).not.toContain('APP123');
+  });
+  it('an explicit primary app id also uses the primary app', async () => {
+    sessions();
+    await new CloudWhatsApp().uploadTemplateExample({ ...acct, appId: 'APP123' }, file);
+    expect(call(0).url).toContain('/APP123/uploads?');
+  });
+  it('refuses an account tied to an app that is not configured here, without calling Meta', async () => {
+    await expect(new CloudWhatsApp().uploadTemplateExample({ ...acct, appId: 'SOME_OLD_APP' }, file)).rejects.toMatchObject({ code: 'unknown_app' });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+  it('a signup account whose app is no longer configured is refused rather than falling back to the primary app', async () => {
+    dropSignup();
+    try {
+      await expect(new CloudWhatsApp().uploadTemplateExample({ ...acct, appId: 'SIGNUPAPP' }, file)).rejects.toMatchObject({ code: 'unknown_app' });
+      expect(fetchMock).not.toHaveBeenCalled();
+    } finally { restoreSignup(); }
+  });
+});
+
+describe("webhook signature selects exactly one app's secret", () => {
+  const body = Buffer.from('{"object":"whatsapp_business_account"}');
+  it('primary signatures verify only as primary; signup signatures only as signup; the default is primary', () => {
+    const wa = new CloudWhatsApp();
+    const a = metaSignatureHeader(body, SECRET), b = metaSignatureHeader(body, SIGNUP_SECRET);
+    expect(wa.verifySignature(body, a, 'primary')).toBe(true);
+    expect(wa.verifySignature(body, a)).toBe(true);
+    expect(wa.verifySignature(body, b, 'signup')).toBe(true);
+    expect(wa.verifySignature(body, b, 'primary')).toBe(false);
+    expect(wa.verifySignature(body, b)).toBe(false);
+    expect(wa.verifySignature(body, a, 'signup')).toBe(false);
+  });
+  it('an unconfigured signup app verifies nothing (no fallback to the primary secret)', () => {
+    for (const k of ['WHATSAPP_SIGNUP_APP_ID', 'WHATSAPP_SIGNUP_APP_SECRET', 'WHATSAPP_SIGNUP_VERIFY_TOKEN']) delete process.env[k];
+    resetConfigForTests();
+    try {
+      const wa = new CloudWhatsApp();
+      expect(wa.verifySignature(body, metaSignatureHeader(body, SECRET), 'signup')).toBe(false);
+      expect(wa.verifySignature(body, metaSignatureHeader(body, ''), 'signup')).toBe(false);
+      expect(wa.verifySignature(body, metaSignatureHeader(body, SECRET), 'primary')).toBe(true); // primary unaffected
+    } finally {
+      Object.assign(process.env, { WHATSAPP_SIGNUP_APP_ID: 'SIGNUPAPP', WHATSAPP_SIGNUP_APP_SECRET: SIGNUP_SECRET, WHATSAPP_SIGNUP_VERIFY_TOKEN: 'unit-signup-verify' });
+      resetConfigForTests();
+    }
   });
 });
 
@@ -147,17 +219,46 @@ describe('coexistence webhook payloads (shapes from Meta\'s webhook reference)',
   });
 });
 
-describe('Embedded Signup configuration', () => {
+describe('Embedded Signup configuration (two Meta apps)', () => {
   const base = { DATABASE_URL: 'x', SESSION_SECRET: 'unit-test-session-secret-0123456789', APP_ENCRYPTION_KEY: 'unit-test-encryption-key-0123456789' };
-  it('is disabled by default', () => {
-    expect(validateConfig(base).WHATSAPP_EMBEDDED_SIGNUP_ENABLED).toBe(false);
+  const cloud = { ...base, WHATSAPP_PROVIDER: 'cloud', WHATSAPP_APP_SECRET: 'p-secret', WHATSAPP_VERIFY_TOKEN: 'p-verify' };
+  const trio = { WHATSAPP_SIGNUP_APP_ID: 'S_ID', WHATSAPP_SIGNUP_APP_SECRET: 's-secret', WHATSAPP_SIGNUP_VERIFY_TOKEN: 's-verify' };
+
+  it('is disabled by default and needs none of the signup values', () => {
+    const c = validateConfig(base);
+    expect(c.WHATSAPP_EMBEDDED_SIGNUP_ENABLED).toBe(false);
+    expect(c.WHATSAPP_SIGNUP_APP_ID).toBeUndefined();
   });
-  it('needs the app id, secret and configuration id when enabled with the cloud provider', () => {
-    const env = { ...base, WHATSAPP_PROVIDER: 'cloud', WHATSAPP_APP_SECRET: 's', WHATSAPP_VERIFY_TOKEN: 'v', WHATSAPP_EMBEDDED_SIGNUP_ENABLED: 'true' };
-    expect(() => validateConfig(env)).toThrow(/WHATSAPP_APP_ID[\s\S]*WHATSAPP_EMBEDDED_SIGNUP_CONFIG_ID/);
-    expect(validateConfig({ ...env, WHATSAPP_APP_ID: 'a', WHATSAPP_EMBEDDED_SIGNUP_CONFIG_ID: 'c' }).WHATSAPP_EMBEDDED_SIGNUP_ENABLED).toBe(true);
+  it('flag OFF: an existing primary-only cloud setup is valid and unchanged', () => {
+    expect(() => validateConfig({ ...cloud, WHATSAPP_APP_ID: 'P_ID' })).not.toThrow();
+    expect(() => validateConfig(cloud)).not.toThrow();
   });
-  it('does not affect a cloud setup that leaves the flag off', () => {
-    expect(() => validateConfig({ ...base, WHATSAPP_PROVIDER: 'cloud', WHATSAPP_APP_SECRET: 's', WHATSAPP_VERIFY_TOKEN: 'v' })).not.toThrow();
+  it('flag OFF: the signup app may already be configured (inert) with a different app id and secret', () => {
+    const c = validateConfig({ ...cloud, WHATSAPP_APP_ID: 'P_ID', ...trio });
+    expect(c.WHATSAPP_EMBEDDED_SIGNUP_ENABLED).toBe(false);
+    expect(c.WHATSAPP_SIGNUP_APP_ID).toBe('S_ID');
+  });
+  it('flag ON with the cloud provider: requires the whole signup trio and the configuration id, with no fallback to the primary values', () => {
+    const on = { ...cloud, WHATSAPP_APP_ID: 'P_ID', WHATSAPP_EMBEDDED_SIGNUP_ENABLED: 'true' };
+    expect(() => validateConfig(on)).toThrow(/WHATSAPP_SIGNUP_APP_ID[\s\S]*WHATSAPP_SIGNUP_APP_SECRET[\s\S]*WHATSAPP_SIGNUP_VERIFY_TOKEN[\s\S]*WHATSAPP_EMBEDDED_SIGNUP_CONFIG_ID/);
+    expect(() => validateConfig({ ...on, ...trio })).toThrow(/WHATSAPP_EMBEDDED_SIGNUP_CONFIG_ID/);
+    expect(validateConfig({ ...on, ...trio, WHATSAPP_EMBEDDED_SIGNUP_CONFIG_ID: 'C' }).WHATSAPP_EMBEDDED_SIGNUP_ENABLED).toBe(true);
+  });
+  it('flag ON with the simulator provider needs no Meta values', () => {
+    expect(() => validateConfig({ ...base, WHATSAPP_PROVIDER: 'simulator', WHATSAPP_EMBEDDED_SIGNUP_ENABLED: 'true' })).not.toThrow();
+  });
+  it('the signup values are all-or-nothing, flag or no flag', () => {
+    expect(() => validateConfig({ ...cloud, WHATSAPP_SIGNUP_APP_ID: 'S_ID' })).toThrow(/WHATSAPP_SIGNUP_APP_SECRET, WHATSAPP_SIGNUP_VERIFY_TOKEN must be set together/);
+    expect(() => validateConfig({ ...cloud, WHATSAPP_SIGNUP_APP_SECRET: 's' })).toThrow(/WHATSAPP_SIGNUP_APP_ID, WHATSAPP_SIGNUP_VERIFY_TOKEN must be set together/);
+    expect(() => validateConfig({ ...cloud, WHATSAPP_SIGNUP_VERIFY_TOKEN: 'v' })).toThrow(/must be set together/);
+  });
+  it("catches a copy-paste of the wrong app's secret (same id needs the same secret, different ids need different secrets) without printing values", () => {
+    const wrong = { ...cloud, WHATSAPP_APP_ID: 'P_ID', ...trio, WHATSAPP_SIGNUP_APP_SECRET: 'p-secret' }; // different app ids, same secret
+    let message = '';
+    try { validateConfig(wrong); } catch (e) { message = (e as Error).message; }
+    expect(message).toMatch(/inconsistent/);
+    expect(message).not.toContain('p-secret');
+    expect(() => validateConfig({ ...cloud, WHATSAPP_APP_ID: 'SAME', ...trio, WHATSAPP_SIGNUP_APP_ID: 'SAME' })).toThrow(/inconsistent/); // same app id, different secrets
+    expect(() => validateConfig({ ...cloud, WHATSAPP_APP_ID: 'SAME', WHATSAPP_SIGNUP_APP_ID: 'SAME', WHATSAPP_SIGNUP_APP_SECRET: 'p-secret', WHATSAPP_SIGNUP_VERIFY_TOKEN: 'v' })).not.toThrow(); // a genuine single-app setup
   });
 });

@@ -61,7 +61,7 @@ export class EmbeddedSignupService {
       attempt: await tx.whatsappSignupAttempt.findFirst({ where: { agencyId }, orderBy: { createdAt: 'desc' } }),
     }));
     return {
-      enabled: true, simulated: this.wa.simulated, appId: c.WHATSAPP_APP_ID ?? null, configId: c.WHATSAPP_EMBEDDED_SIGNUP_CONFIG_ID ?? null, graphVersion: this.graphVersion(),
+      enabled: true, simulated: this.wa.simulated, appId: c.WHATSAPP_SIGNUP_APP_ID ?? null, configId: c.WHATSAPP_EMBEDDED_SIGNUP_CONFIG_ID ?? null, graphVersion: this.graphVersion(),
       // An existing live connection is never replaced by this flow; the admin must disconnect it first.
       blockedByExistingConnection: !!account && account.connectionStatus !== 'disconnected',
       attempt: attempt ? this.view(attempt) : null,
@@ -88,11 +88,40 @@ export class EmbeddedSignupService {
           throw new ConflictException({ code: 'signup_in_progress', message: 'A sign-up is already being processed. Wait a moment and check its status.' });
         }
         // Reuse (idempotent start): same attempt, fresh state value, any stored progress kept.
-        return tx.whatsappSignupAttempt.update({ where: { id: open.id }, data: { stateHash: sha256(state), userId, requestSync: opts.requestSync, expiresAt: new Date(now.getTime() + ATTEMPT_TTL_MS) } });
+        // An attempt that already holds a token keeps its ORIGINAL deadline: re-starting must never prolong how long a token is retained.
+        return tx.whatsappSignupAttempt.update({ where: { id: open.id }, data: { stateHash: sha256(state), userId, requestSync: opts.requestSync, expiresAt: open.tokenRef ? open.expiresAt : new Date(now.getTime() + ATTEMPT_TTL_MS) } });
       }
       return tx.whatsappSignupAttempt.create({ data: { agencyId, userId, stateHash: sha256(state), requestSync: opts.requestSync, expiresAt: new Date(now.getTime() + ATTEMPT_TTL_MS) } });
     });
-    return { attemptId: result.id, state, expiresAt: result.expiresAt, appId: c.WHATSAPP_APP_ID ?? null, configId: c.WHATSAPP_EMBEDDED_SIGNUP_CONFIG_ID ?? null, graphVersion: this.graphVersion() };
+    return { attemptId: result.id, state, expiresAt: result.expiresAt, appId: c.WHATSAPP_SIGNUP_APP_ID ?? null, configId: c.WHATSAPP_EMBEDDED_SIGNUP_CONFIG_ID ?? null, graphVersion: this.graphVersion() };
+  }
+
+  /**
+   * Maintenance, safe to run on every instance and as often as wanted (idempotent). Runs in system context because it works across
+   * agencies, but it only ever NULLs the encrypted token (and closes the attempt); it reads and returns no tenant data.
+   *  1. A not-yet-completed attempt past its deadline is closed and its token forgotten (an abandoned retryable failure would
+   *     otherwise keep a business token that Meta documents as non-expiring by default).
+   *  2. A finished/closed attempt must never hold a token: clear any leftover.
+   * An attempt still inside its deadline is untouched, including one that is mid-run.
+   */
+  async sweepExpiredAttempts(now = new Date()) {
+    const expired = await this.db.system((tx) => tx.whatsappSignupAttempt.updateMany({
+      where: { status: { in: ['started', 'running', 'failed'] }, expiresAt: { lt: now } },
+      data: { status: 'expired', tokenRef: null, runStartedAt: null },
+    }));
+    const leftovers = await this.db.system((tx) => tx.whatsappSignupAttempt.updateMany({
+      where: { tokenRef: { not: null }, status: { in: ['expired', 'cancelled', 'failed_permanent', 'completed'] } },
+      data: { tokenRef: null },
+    }));
+    return { expired: expired.count, leftovers: leftovers.count };
+  }
+
+  /** Never throws (a database without the latest migration is reported, not fatal). */
+  async sweepExpiredAttemptsSafely() {
+    try { return await this.sweepExpiredAttempts(); } catch (e) {
+      this.log.warn(`Could not clear expired sign-up tokens: ${(e as Error).message.split('\n').pop()}`);
+      return null;
+    }
   }
 
   async cancel(agencyId: string, userId: string, attemptId: string) {
@@ -171,7 +200,13 @@ export class EmbeddedSignupService {
         if (e instanceof WaSendError) throw new StepFailure('exchange', 'code_required', `${e.message}. ${hintForKind(e.kind)} Run the Meta sign-up window again for a fresh code.`);
         throw e;
       }
-      a = await patch({ tokenRef: encryptSecret(token), step: 'verify' });
+      // Remember WHICH app issued this token: the commit must still be under that same app.
+      a = await patch({ tokenRef: encryptSecret(token), step: 'verify', signupAppId: config().WHATSAPP_SIGNUP_APP_ID ?? null });
+    }
+    // If the signup app configuration changed since the token was issued (edited mid-attempt, or an attempt from before this check),
+    // never keep or commit that token under the new app: it is dropped (permanent failure) and the admin starts again.
+    if ((a.signupAppId ?? null) !== (config().WHATSAPP_SIGNUP_APP_ID ?? null)) {
+      throw new StepFailure('verify', 'signup_app_changed', 'The Embedded Signup app configuration changed since this attempt started. Nothing was connected. Start a new attempt.', true);
     }
     const token = decryptSecret(a.tokenRef!);
     const waba = a.wabaId!;
@@ -188,7 +223,9 @@ export class EmbeddedSignupService {
     }
     const clash = await this.db.system((tx) => tx.whatsappAccount.findFirst({ where: { agencyId: { not: agencyId }, OR: [{ phoneNumberId: phoneId }, { wabaId: waba }] }, select: { id: true } }));
     if (clash) throw new StepFailure('verify', 'whatsapp_in_use', 'This WhatsApp number or business account is already connected to another agency.', true, 'conflict');
-    const creds: WaAccount = { phoneNumberId: phoneId, wabaId: waba, token };
+    // The app that issued the token, as recorded when it was exchanged (the exchange uses only the signup app's credentials).
+    const signupAppId = a.signupAppId ?? undefined;
+    const creds: WaAccount = { phoneNumberId: phoneId, wabaId: waba, token, appId: signupAppId };
     let coex;
     try { coex = await this.wa.getCoexistenceInfo(creds); } catch (e) { throw this.upstream('verify', e, 'Could not read the number\'s WhatsApp Business app status'); }
     if (!coex.isOnBizApp) {
@@ -202,6 +239,10 @@ export class EmbeddedSignupService {
     let info;
     try { info = await this.wa.getPhoneInfo(creds); } catch (e) { throw this.upstream('subscribe', e, 'Could not read the number\'s status'); }
     a = await patch({ step: 'commit' });
+    // Last look before committing: the configured signup app must STILL be the one that issued the token.
+    if ((a.signupAppId ?? null) !== (config().WHATSAPP_SIGNUP_APP_ID ?? null)) {
+      throw new StepFailure('commit', 'signup_app_changed', 'The Embedded Signup app configuration changed while connecting. Nothing was connected. Start a new attempt.', true);
+    }
 
     // 4. Commit atomically. An existing live connection is never overwritten (re-checked here, inside the transaction).
     const now = new Date();
@@ -216,6 +257,8 @@ export class EmbeddedSignupService {
           displayPhoneNumber: info.displayPhoneNumber ?? null, verifiedName: info.verifiedName ?? null, displayNameStatus: info.displayNameStatus ?? null,
           qualityRating: info.qualityRating ?? null, messagingLimitTier: info.messagingLimitTier ?? null,
           onboardingMethod: 'embedded', isCoexistence: true, businessId: a.businessId, connectedByUserId: userId,
+          // Recorded only here, on a successful commit: it ties this token (and this account's webhooks) to the signup app.
+          metaAppId: signupAppId ?? null,
         };
         const acc = await tx.whatsappAccount.upsert({ where: { agencyId }, create: { agencyId, ...data }, update: data });
         await audit(tx, { agencyId, actorUserId: userId, action: 'whatsapp.connected', entityType: 'whatsapp_account', entityId: acc.id, metadata: { mode: 'cloud', method: 'embedded', coexistence: true, phoneNumberId: phoneId, wabaId: waba } });
