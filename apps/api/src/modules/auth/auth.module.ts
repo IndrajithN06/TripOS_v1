@@ -140,7 +140,7 @@ export class AuthController {
       agency,
       permissions: PERMISSIONS[p.role],
       environment: {
-        nodeEnv: config().NODE_ENV, whatsapp: this.wa.name, whatsappSimulated: this.wa.simulated,
+        nodeEnv: config().NODE_ENV, whatsapp: this.wa.name, whatsappSimulated: this.wa.simulated, whatsappEmbeddedSignup: config().WHATSAPP_EMBEDDED_SIGNUP_ENABLED,
         ai: this.ai.name, aiAvailable: this.ai.available, storage: this.storage.name,
       },
     };

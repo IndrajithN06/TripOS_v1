@@ -45,6 +45,8 @@ Keep production values in the host's secret manager; `.env` files are git-ignore
 ## 4. Monitoring (to be wired up before real traffic)
 - Uptime check on `GET /health/ready` (database and storage).
 - Alert on rows in `Job` with `status='failed'` (also visible in the Super Admin console).
+- **Alert on API log lines containing `ALERT app_unrecognised_503`.** The webhook route answered 503 because an event belongs to an account whose Meta app is not configured on this server (for example `WHATSAPP_SIGNUP_APP_ID` was changed). The line carries the route, the number of events and `consecutive=N` (N 503s in a row on that route); from the 3rd it ends with `REPEATED`. Meta documents retries for up to 7 days for any non-200; what it does beyond that is not documented, so treat a REPEATED line as urgent. The affected accounts also show as degraded with `lastErrorCode = APP_UNRECOGNISED` in Settings. Fix the configuration or reconnect the account.
+- Watch for `payload_too_large` (413) on `/webhooks/*`: Meta documents payloads up to 3 MB and the limit is `WHATSAPP_WEBHOOK_MAX_BODY_BYTES` (default 4 MiB).
 - Error tracking for API and web.
 - Webhook 4xx/5xx rate and signature failures.
 - AI spend via `AiUsage`.

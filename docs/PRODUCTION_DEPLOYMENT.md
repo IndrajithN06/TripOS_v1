@@ -19,14 +19,17 @@ Costs depend on volume and provider pricing (Meta per-conversation fees, OpenAI 
 ## Environment
 Copy `apps/api/.env.production.example` into your secret manager. Startup **fails with a precise list** if a secret is a development default, storage is `local`, WhatsApp is `simulator`, AI is `mock`, or URLs are not https. Web needs only `API_INTERNAL_URL`. No secret may be placed in `NEXT_PUBLIC_*`.
 
+**WhatsApp Embedded Signup (optional, off by default).** Leave the `WHATSAPP_SIGNUP_*` lines commented out unless you are enabling it. Setting *any* of them makes startup require all three (`WHATSAPP_SIGNUP_APP_ID`, `WHATSAPP_SIGNUP_APP_SECRET`, `WHATSAPP_SIGNUP_VERIFY_TOKEN`) **and `WHATSAPP_APP_ID` (the original Cloud API app)**, and `WHATSAPP_EMBEDDED_SIGNUP_CONFIG_ID` as well once `WHATSAPP_EMBEDDED_SIGNUP_ENABLED=true`. Startup fails with a precise list if they are inconsistent (see `docs/WHATSAPP_EMBEDDED_SIGNUP.md`).
+
 ## Procedure
 1. **Backup** the database (snapshot) before any migration.
 2. Build images: `docker build --target api -t tripos-api .` and `--target web -t tripos-web .`.
 3. Run migrations deliberately, as the owner role: `DATABASE_MIGRATE_URL=... npx prisma migrate deploy` (from `apps/api`). Create the `tripos_app` role first and grant per `apps/api/prisma/migrations/*_init/migration.sql` (the grants run automatically if the role exists).
+   **This release adds migrations** `20261014090000_whatsapp_embedded_signup`, `20261015090000_whatsapp_account_meta_app_id` and `20261015100000_whatsapp_signup_attempt_app_id` (all additive: new nullable columns and one tenant table with row-level security). **Apply all of them before restarting the API or enabling signup.** An API built from this release queries the new columns, so against an unmigrated database every WhatsApp query fails (the startup audit logs this). Check with `npx prisma migrate status`; it must report the schema up to date.
 4. Deploy API; check `GET /health` and `GET /health/ready` (database + storage).
 5. Deploy Web; sign-in smoke test.
 6. Create the Super Admin out-of-band (SQL/one-off script with a strong password), sign in, **enrol MFA** (`POST /auth/mfa/setup` then `/auth/mfa/enable`); in production nothing else is usable for Super Admin until MFA is on.
-7. Configure the Meta webhook: callback `https://api.example.com/webhooks/whatsapp`, verify token = `WHATSAPP_VERIFY_TOKEN`, subscribe to `messages`. Connect an agency via Settings → WhatsApp (WABA ID, phone number ID, token).
+7. Configure the Meta webhook: callback `https://api.example.com/webhooks/whatsapp`, verify token = `WHATSAPP_VERIFY_TOKEN`, subscribe to `messages`. If Embedded Signup is used with a **second** Meta app, that app gets a second callback `https://api.example.com/webhooks/whatsapp/signup` with its own verify token (in single-app mode, where both app ids are equal, this route answers 404 and the first callback receives everything; `docs/WHATSAPP_EMBEDDED_SIGNUP.md`); the first callback is not changed. Connect an agency via Settings → WhatsApp (WABA ID, phone number ID, token).
 8. Verify end to end with a staging number before any real customer number is connected.
 
 ## Rollback and recovery

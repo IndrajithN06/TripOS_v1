@@ -56,7 +56,7 @@ Status changes also arrive by webhook (`message_template_status_update`). Only `
 ## 7. What is built and what to expect on first contact
 Built (phase A, tested against a mocked Meta, **not yet against the real service**): credential check on connect (bad token is rejected with Meta's message); automatic webhook subscription for the agency's WABA; connection health (quality rating, messaging limit, display-name status, last webhook, last check) with states `connected / degraded / disconnected`; periodic health check every 15 minutes; template submit, sync and status webhooks; Meta error classification with plain-language hints; sends blocked while disconnected; a banner for all users when the connection is degraded.
 Still expected to need adjustment when first run live: field names and codes in real Meta responses; the Graph API version in `WHATSAPP_API_BASE_URL` (check it is currently supported); permissions on the token.
-- Embedded Signup (self-service onboarding) is not built; IDs and tokens are pasted in manually.
+- Embedded Signup v4 for WhatsApp Business app numbers (coexistence) is built behind `WHATSAPP_EMBEDDED_SIGNUP_ENABLED` (default off) and tested only against a fake Meta; see `WHATSAPP_EMBEDDED_SIGNUP.md`. Manual connection (paste IDs and token) remains the fallback.
 - Media: outbound uploads send bytes to Meta then reference the media ID; inbound media is downloaded with the token. Not yet exercised live.
 - Error-code mapping is generic (Meta error code and message are stored on the failed message).
 - Token expiry/revocation is detected only when a send fails.

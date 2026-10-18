@@ -34,6 +34,18 @@ const schema = z.object({
   WHATSAPP_APP_ID: z.string().optional(),
   WHATSAPP_APP_SECRET: z.string().optional(),
   WHATSAPP_VERIFY_TOKEN: z.string().optional(),
+  /**
+   * The SECOND Meta app: Embedded Signup v4. Used only for the sign-up popup, the authorization-code exchange and the
+   * /webhooks/whatsapp/signup route (own verify token, own HMAC secret). There is deliberately no fallback to the three values above:
+   * set all three or none. Accounts connected through it record this app id in WhatsappAccount.metaAppId.
+   */
+  WHATSAPP_SIGNUP_APP_ID: z.string().optional(),
+  WHATSAPP_SIGNUP_APP_SECRET: z.string().optional(),
+  WHATSAPP_SIGNUP_VERIFY_TOKEN: z.string().optional(),
+  /** Embedded Signup v4 (coexistence). Disabled unless explicitly turned on; the manual connection is unaffected. */
+  WHATSAPP_EMBEDDED_SIGNUP_ENABLED: bool,
+  /** The Facebook Login for Business configuration id (v4) created in the Meta app dashboard. */
+  WHATSAPP_EMBEDDED_SIGNUP_CONFIG_ID: z.string().optional(),
 
   AI_PROVIDER: z.enum(['mock', 'disabled', 'openai']).default('mock'),
   AI_MODEL: z.string().default('gpt-4o-mini'),
@@ -46,6 +58,11 @@ const schema = z.object({
 
   /** Explicit, loud opt-in required to run mock providers with NODE_ENV=production (e.g. a staging box). */
   ALLOW_MOCK_PROVIDERS_IN_PRODUCTION: bool,
+  /**
+   * JSON body limit for /webhooks/* only (raw body is still captured for signature checks). Meta documents webhook payloads of up to 3 MB,
+   * so the default is 4 MiB; every other route keeps the 1 MB limit. Raise only after checking Meta's documentation.
+   */
+  WHATSAPP_WEBHOOK_MAX_BODY_BYTES: z.coerce.number().int().min(1048576).max(26214400).default(4194304),
   /** Seconds a signed media URL stays valid. */
   SIGNED_URL_TTL_SECONDS: z.coerce.number().default(300),
 });
@@ -89,6 +106,28 @@ export function validateConfig(env: Record<string, string | undefined>): AppConf
   // (every Meta delivery rejected as unsigned, and the verification handshake refused).
   if (c.NODE_ENV !== 'production' && c.WHATSAPP_PROVIDER === 'cloud') {
     for (const k of ['WHATSAPP_APP_SECRET', 'WHATSAPP_VERIFY_TOKEN'] as const) if (!c[k]) problems.push(`${k} is required when WHATSAPP_PROVIDER=cloud (set it in apps/api/.env)`);
+  }
+  // Second Meta app (Embedded Signup): all-or-nothing, never half-configured, never borrowed from the primary app.
+  const signup = ['WHATSAPP_SIGNUP_APP_ID', 'WHATSAPP_SIGNUP_APP_SECRET', 'WHATSAPP_SIGNUP_VERIFY_TOKEN'] as const;
+  const anySignup = signup.some((k) => c[k]);
+  if (anySignup && signup.some((k) => !c[k])) {
+    problems.push(`${signup.filter((k) => !c[k]).join(', ')} must be set together with the other WHATSAPP_SIGNUP_* values (all three or none)`);
+  }
+  if (anySignup) {
+    // A template placeholder copied from an example file, or stray whitespace, is never a real value.
+    for (const k of signup) if (c[k] && (/^<.*>$/.test(c[k]!.trim()) || c[k] !== c[k]!.trim())) problems.push(`${k} looks like a placeholder or has surrounding whitespace`);
+    // The original app's id is what lets TripOS classify accounts and webhooks explicitly (NULL metaAppId = primary app).
+    if (!c.WHATSAPP_APP_ID) {
+      problems.push('WHATSAPP_APP_ID is required whenever any WHATSAPP_SIGNUP_* value is set (it identifies the original Cloud API app)');
+    } else if (c.WHATSAPP_SIGNUP_APP_ID && c.WHATSAPP_APP_SECRET && c.WHATSAPP_SIGNUP_APP_SECRET) {
+      // Two different apps must have two different secrets; one app has exactly one. Equal ids are the explicitly supported
+      // single-app setup: every account resolves to the primary route, so the original callback /webhooks/whatsapp receives everything.
+      const sameId = c.WHATSAPP_APP_ID === c.WHATSAPP_SIGNUP_APP_ID, sameSecret = c.WHATSAPP_APP_SECRET === c.WHATSAPP_SIGNUP_APP_SECRET;
+      if (sameId !== sameSecret) problems.push('WHATSAPP_APP_ID/WHATSAPP_APP_SECRET and WHATSAPP_SIGNUP_APP_ID/WHATSAPP_SIGNUP_APP_SECRET are inconsistent: identical app ids need identical secrets, different app ids need different secrets');
+    }
+  }
+  if (c.WHATSAPP_EMBEDDED_SIGNUP_ENABLED && c.WHATSAPP_PROVIDER === 'cloud') {
+    for (const k of [...signup, 'WHATSAPP_EMBEDDED_SIGNUP_CONFIG_ID'] as const) if (!c[k]) problems.push(`${k} is required when WHATSAPP_EMBEDDED_SIGNUP_ENABLED=true with the cloud provider`);
   }
   if (problems.length) throw new Error('Unsafe or incomplete configuration:\n' + problems.map((p) => `  - ${p}`).join('\n'));
   return { ...c, isProd: c.NODE_ENV === 'production' };

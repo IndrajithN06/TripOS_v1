@@ -2,7 +2,7 @@ import { ArgumentsHost, Catch, ExceptionFilter, HttpException, HttpStatus, Logge
 import { PricingError } from '@tripos/pricing';
 import { config } from '../config/config';
 
-/** Consistent error envelope: { error: { code, message, issues? } }. No stack traces or internals leak. */
+/** Consistent error envelope: { error: { code, message, issues?, retryable?, needsNewCode? } }. No stack traces or internals leak. */
 @Catch()
 export class AllExceptionsFilter implements ExceptionFilter {
   private readonly log = new Logger('Errors');
@@ -16,11 +16,15 @@ export class AllExceptionsFilter implements ExceptionFilter {
     if (ex instanceof HttpException) {
       status = ex.getStatus();
       const r = ex.getResponse() as any;
-      body = typeof r === 'string' ? { code: 'error', message: r } : { code: r.code ?? 'error', message: r.message ?? ex.message, issues: r.issues };
+      body = typeof r === 'string' ? { code: 'error', message: r } : { code: r.code ?? 'error', message: r.message ?? ex.message, issues: r.issues, retryable: r.retryable, needsNewCode: r.needsNewCode };
       if (Array.isArray(body.message)) body.message = body.message.join('; ');
     } else if (ex instanceof PricingError) {
       status = 422;
       body = { code: 'pricing_error', message: ex.message };
+    } else if ((ex as any)?.type === 'entity.too.large') {
+      status = 413;
+      body = { code: 'payload_too_large', message: 'The request body is too large' };
+      this.log.error(`${req.method} ${String(req.url).split('?')[0]}: body of ${req.headers?.['content-length'] ?? 'unknown'} bytes exceeds the limit`);
     } else if ((ex as any)?.code === 'P2002') {
       status = 409;
       body = { code: 'conflict', message: 'A record with these details already exists' };

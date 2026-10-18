@@ -2,7 +2,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 export class ApiError extends Error {
-  constructor(message: string, readonly status: number, readonly code?: string, readonly issues?: { path: string; message: string }[]) { super(message); }
+  constructor(message: string, readonly status: number, readonly code?: string, readonly issues?: { path: string; message: string }[], readonly retryable?: boolean, readonly needsNewCode?: boolean) { super(message); }
 }
 
 export async function api<T = any>(path: string, opts: { method?: string; body?: unknown; form?: FormData } = {}): Promise<T> {
@@ -17,7 +17,7 @@ export async function api<T = any>(path: string, opts: { method?: string; body?:
   if (!res.ok) {
     const e = json?.error ?? {};
     if (res.status === 401 && typeof window !== 'undefined' && !location.pathname.startsWith('/login') && !location.pathname.startsWith('/accept-invite')) location.href = '/login';
-    throw new ApiError(e.message ?? `Request failed (${res.status})`, res.status, e.code, e.issues);
+    throw new ApiError(e.message ?? `Request failed (${res.status})`, res.status, e.code, e.issues, e.retryable, e.needsNewCode);
   }
   return json as T;
 }
