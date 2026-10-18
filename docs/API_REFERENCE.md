@@ -90,6 +90,7 @@ Base URL (local): `http://localhost:4100`. The web app calls the API through its
 | POST | `/quotes/:id/versions/:n/send` | text → PDF → photos; returns per-item result |
 | POST | `/quotes/:id/versions/:n/retry` | resend only failed/pending items |
 | POST | `/quotes/:id/status` | manual transitions (see Business Guide §5.7) |
+| DELETE | `/quotes/:id` | **soft delete** (body: optional `reason`, max 500 chars, kept in the audit log only). Agency admin: any quote in the agency; sales: only quotes they own (`403` otherwise). Missing, other-agency, hidden-from-you or already-deleted quotes are all `404 not_found`; `409 quote_sending` while a send is running. The quote disappears from lists, search, detail, preview/PDF, the inbox panel, the dashboard and analytics; the customer's `/q/<token>` link and PDF stop working; queued retries do nothing. Versions, delivery records, messages, files and audit history are kept and the quote number is never reused. No restore endpoint in V1. |
 | POST | `/quotes/:id/follow-up` | `{followUpAt|null}` |
 | POST | `/quotes/:id/duplicate` | new quote number, version 1 |
 

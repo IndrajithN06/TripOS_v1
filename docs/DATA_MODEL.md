@@ -40,7 +40,7 @@ PostgreSQL 16, managed with Prisma migrations (`apps/api/prisma`). 24 tables and
 ### Quotes
 | Table | Purpose | Notes |
 |---|---|---|
-| `Quote` | Header | unique (`agencyId`,`quoteNumber`); `status`; `currentVersionId`; `expiryAt`; `followUpAt`; `ownerUserId` |
+| `Quote` | Header | unique (`agencyId`,`quoteNumber`); `status`; `currentVersionId`; `expiryAt`; `followUpAt`; `ownerUserId`; `deletedAt` / `deletedByUserId` = soft delete (NULL = visible; the row and everything under it are never removed, and every reader filters `deletedAt IS NULL`; the deletion reason lives in the audit log) |
 | `QuoteVersion` | A priced snapshot | `trip` JSON, `rateSnapshot` JSON, `pricingInput` JSON (the editable inputs), `lines` JSON, `subtotal/discount/tax/total`, `termsSnapshot` JSON (branding and terms at that moment), `pdfAssetId`, `sentAt`; unique (`quoteId`,`versionNumber`). **A database trigger makes the row immutable once `sentAt` is set** (only `status` may change) and forbids deleting it. |
 | `QuoteVersionImage` | Photos chosen for a version | frozen by trigger once the version is sent |
 | `QuoteSendAttempt` | Per-item delivery (text, pdf, each image) | `status` pending / sent / failed, `attempts`, `lastError`, `messageId`; powers partial-delivery retry |
