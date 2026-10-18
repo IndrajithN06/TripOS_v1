@@ -1,6 +1,7 @@
 import { Logger } from '@nestjs/common';
 import { ForbiddenException, NotFoundException, ServiceUnavailableException, UnauthorizedException } from '@nestjs/common';
 import { resetConfigForTests } from '../../config/config';
+import { useHermeticEnv } from '../../../test/hermetic-env';
 import { CloudWhatsApp, parseCloudPayload } from '../../providers/whatsapp/whatsapp';
 import { metaSignatureHeader } from '../../providers/whatsapp/signature';
 import { InboundService, resetWebhookDiagnosticsForTests, SignupWebhooksController, WebhooksController } from './webhooks.module';
@@ -12,12 +13,9 @@ const ENV = {
   WHATSAPP_APP_ID: 'APP_PRIMARY', WHATSAPP_APP_SECRET: 'secret-primary', WHATSAPP_VERIFY_TOKEN: 'verify-primary',
   WHATSAPP_SIGNUP_APP_ID: 'APP_SIGNUP', WHATSAPP_SIGNUP_APP_SECRET: 'secret-signup', WHATSAPP_SIGNUP_VERIFY_TOKEN: 'verify-signup',
 };
-const KEYS = Object.keys(ENV);
-const saved: Record<string, string | undefined> = {};
-
-beforeAll(() => { for (const k of KEYS) saved[k] = process.env[k]; });
+useHermeticEnv(ENV);
+// Individual tests drop the signup trio; start each one from the full two-app setup again.
 beforeEach(() => { Object.assign(process.env, ENV); resetConfigForTests(); });
-afterAll(() => { for (const k of KEYS) { if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k]; } resetConfigForTests(); });
 
 const payload = { object: 'whatsapp_business_account', entry: [{ id: 'WABA1', time: 1748477359, changes: [{ field: 'smb_message_echoes', value: { messaging_product: 'whatsapp', metadata: { phone_number_id: 'PN1' }, message_echoes: [{ from: '1', to: '2', id: 'wamid.1', timestamp: '1748477000', type: 'text', text: { body: 'hi' } }] } }] }] };
 const raw = Buffer.from(JSON.stringify(payload));

@@ -1,4 +1,5 @@
 import { resetConfigForTests } from '../../config/config';
+import { useHermeticEnv } from '../../../test/hermetic-env';
 import { mapTemplateStatus } from '../../modules/whatsapp/whatsapp-account.service';
 import { classifyMetaError } from './meta-errors';
 import { CloudWhatsApp, parseCloudPayload, WaSendError } from './whatsapp';
@@ -9,13 +10,10 @@ const acct = { phoneNumberId: 'PN1', wabaId: 'WABA1', token: 'tok-123456' };
 let fetchMock: jest.SpyInstance;
 const reply = (status: number, body: unknown) => Promise.resolve(new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } }));
 
-beforeAll(() => {
-  Object.assign(process.env, { DATABASE_URL: 'x', SESSION_SECRET: 'unit-test-session-secret-0123456789', APP_ENCRYPTION_KEY: 'unit-test-encryption-key-0123456789', WHATSAPP_API_BASE_URL: 'https://graph.test/v99.0' });
-  resetConfigForTests();
-});
+// These tests describe a primary-app-only setup; the hermetic env keeps the developer's real .env (which may hold Embedded Signup settings) out of them.
+useHermeticEnv({ DATABASE_URL: 'x', SESSION_SECRET: 'unit-test-session-secret-0123456789', APP_ENCRYPTION_KEY: 'unit-test-encryption-key-0123456789', WHATSAPP_API_BASE_URL: 'https://graph.test/v99.0' });
 beforeEach(() => { fetchMock = jest.spyOn(global, 'fetch'); });
 afterEach(() => fetchMock.mockRestore());
-afterAll(resetConfigForTests);
 
 const call = (n = 0) => ({ url: String(fetchMock.mock.calls[n][0]), init: fetchMock.mock.calls[n][1] as RequestInit });
 

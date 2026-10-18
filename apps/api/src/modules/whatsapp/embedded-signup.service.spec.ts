@@ -127,3 +127,70 @@ describe('connection preservation still holds', () => {
     expect(db.snapshot('whatsappSignupAttempt')).toHaveLength(0);
   });
 });
+
+describe('discovery and eligibility failures, with a system-user token (mocked)', () => {
+  const noPhone = body({ event: { type: 'FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING', wabaId: 'W1' } }); // coexistence event that carries only the WABA
+
+  it('a WABA with NO phone numbers is refused clearly, nothing is subscribed, and the token is erased', async () => {
+    const { db, wa, svc } = make();
+    wa.listWabaPhoneNumbers.mockResolvedValueOnce([]);
+    const err = await failure(svc.complete(AG, USER, noPhone));
+    expect(err).toMatchObject({ code: 'phone_selection_required', retryable: false });
+    expect(wa.subscribeWebhooks).not.toHaveBeenCalled();
+    expect(wa.requestSmbSync).not.toHaveBeenCalled();
+    expect(db.snapshot('whatsappAccount')).toHaveLength(0);
+    expect(db.snapshot('whatsappSignupAttempt')[0]).toMatchObject({ status: 'failed_permanent', tokenRef: null });
+  });
+
+  it('a WABA with SEVERAL numbers is refused (choosing a number is not built), and none is guessed', async () => {
+    const { db, wa, svc } = make();
+    wa.listWabaPhoneNumbers.mockResolvedValueOnce([{ id: 'PN1' }, { id: 'PN2' }]);
+    expect(await failure(svc.complete(AG, USER, noPhone))).toMatchObject({ code: 'phone_selection_required' });
+    expect(db.snapshot('whatsappAccount')).toHaveLength(0);
+  });
+
+  it('a normal Cloud API number (not on the WhatsApp Business app) stops at the eligibility check: never registered, subscribed or synced, token erased', async () => {
+    const { db, wa, svc } = make();
+    wa.getCoexistenceInfo.mockResolvedValueOnce({ isOnBizApp: false, platformType: 'CLOUD_API' });
+    const err = await failure(svc.complete(AG, USER, body({ event: { type: 'FINISH', wabaId: 'W1', phoneNumberId: 'PN1' } })));
+    expect(err).toMatchObject({ code: 'not_coexistence', retryable: false });
+    expect(wa.subscribeWebhooks).not.toHaveBeenCalled();
+    expect(wa.requestSmbSync).not.toHaveBeenCalled();
+    expect(Object.keys(wa).filter((k) => /regist|pin/i.test(k))).toEqual([]); // the provider has no way to register a number
+    expect(db.snapshot('whatsappAccount')).toHaveLength(0);
+    expect(db.snapshot('whatsappSignupAttempt')[0]).toMatchObject({ status: 'failed_permanent', tokenRef: null });
+  });
+
+  it('if the token\'s system user lacks access to the WABA, the failure is retryable: the token is kept and a resume (no new code) succeeds once access is fixed', async () => {
+    const { db, wa, svc } = make();
+    wa.listWabaPhoneNumbers.mockRejectedValueOnce(new WaSendError('(#200) Requires asset access', '200', false, 'auth'));
+    const first = await failure(svc.complete(AG, USER, body()));
+    expect(first).toMatchObject({ code: 'whatsapp_auth_failed', retryable: true });
+    expect(first.message).toMatch(/Reconnect|permission|token/i);
+    expect(db.snapshot('whatsappSignupAttempt')[0]).toMatchObject({ status: 'failed', failedStep: 'verify' });
+    expect(db.snapshot('whatsappSignupAttempt')[0].tokenRef).toBeTruthy();
+    expect(db.snapshot('whatsappAccount')).toHaveLength(0);
+
+    const retry = await svc.complete(AG, USER, body({ code: undefined })); // access fixed on the Meta side; the same stored token is reused
+    expect(retry.status).toBe('completed');
+    expect(wa.exchangeSignupCode).toHaveBeenCalledTimes(1);
+    expect(db.snapshot('whatsappAccount')[0]).toMatchObject({ onboardingMethod: 'embedded', isCoexistence: true, metaAppId: 'APP_SIGNUP' });
+  });
+
+  it('a permission failure on the eligibility check behaves the same way (retryable, token kept)', async () => {
+    const { db, wa, svc } = make();
+    wa.getCoexistenceInfo.mockRejectedValueOnce(new WaSendError('Application does not have permission', '10', false, 'auth'));
+    expect(await failure(svc.complete(AG, USER, body()))).toMatchObject({ code: 'whatsapp_auth_failed', retryable: true });
+    expect(db.snapshot('whatsappSignupAttempt')[0].tokenRef).toBeTruthy();
+    expect(wa.subscribeWebhooks).not.toHaveBeenCalled();
+  });
+
+  it('the token is never present in any error body or stored message', async () => {
+    const { db, wa, svc } = make();
+    wa.subscribeWebhooks.mockRejectedValueOnce(new WaSendError('boom', '1', true, 'transient'));
+    const err = await failure(svc.complete(AG, USER, body()));
+    const stored = JSON.stringify(db.snapshot('whatsappSignupAttempt')[0].lastError);
+    expect(JSON.stringify(err)).not.toContain('business-token');
+    expect(stored).not.toContain('business-token');
+  });
+});

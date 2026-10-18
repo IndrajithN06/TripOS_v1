@@ -1,4 +1,5 @@
 import { resetConfigForTests, validateConfig } from '../../config/config';
+import { useHermeticEnv } from '../../../test/hermetic-env';
 import { metaSignatureHeader } from './signature';
 import { CloudWhatsApp, parseCloudPayload, SimulatorWhatsApp, WaSendError } from './whatsapp';
 
@@ -12,13 +13,9 @@ const reply = (status: number, body: unknown) => Promise.resolve(new Response(JS
 const failure = (p: Promise<unknown>) => p.then(() => { throw new Error('expected the call to fail'); }, (e) => e as WaSendError);
 const call = (n = 0) => ({ url: String(fetchMock.mock.calls[n][0]), init: (fetchMock.mock.calls[n][1] ?? {}) as RequestInit });
 
-beforeAll(() => {
-  Object.assign(process.env, { DATABASE_URL: 'x', SESSION_SECRET: 'unit-test-session-secret-0123456789', APP_ENCRYPTION_KEY: 'unit-test-encryption-key-0123456789', WHATSAPP_API_BASE_URL: 'https://graph.test/v99.0', WHATSAPP_APP_ID: 'APP123', WHATSAPP_APP_SECRET: SECRET, WHATSAPP_PROVIDER: 'cloud', WHATSAPP_VERIFY_TOKEN: 'unit-verify-token', WHATSAPP_SIGNUP_APP_ID: 'SIGNUPAPP', WHATSAPP_SIGNUP_APP_SECRET: SIGNUP_SECRET, WHATSAPP_SIGNUP_VERIFY_TOKEN: 'unit-signup-verify' });
-  resetConfigForTests();
-});
+useHermeticEnv({ DATABASE_URL: 'x', SESSION_SECRET: 'unit-test-session-secret-0123456789', APP_ENCRYPTION_KEY: 'unit-test-encryption-key-0123456789', WHATSAPP_API_BASE_URL: 'https://graph.test/v99.0', WHATSAPP_APP_ID: 'APP123', WHATSAPP_APP_SECRET: SECRET, WHATSAPP_PROVIDER: 'cloud', WHATSAPP_VERIFY_TOKEN: 'unit-verify-token', WHATSAPP_SIGNUP_APP_ID: 'SIGNUPAPP', WHATSAPP_SIGNUP_APP_SECRET: SIGNUP_SECRET, WHATSAPP_SIGNUP_VERIFY_TOKEN: 'unit-signup-verify' });
 beforeEach(() => { fetchMock = jest.spyOn(global, 'fetch'); });
 afterEach(() => fetchMock.mockRestore());
-afterAll(() => { for (const k of ['WHATSAPP_APP_ID', 'WHATSAPP_APP_SECRET', 'WHATSAPP_PROVIDER', 'WHATSAPP_VERIFY_TOKEN', 'WHATSAPP_SIGNUP_APP_ID', 'WHATSAPP_SIGNUP_APP_SECRET', 'WHATSAPP_SIGNUP_VERIFY_TOKEN']) delete process.env[k]; resetConfigForTests(); });
 
 describe('Embedded Signup requests (Cloud provider)', () => {
   it('exchanges the code server-side with the SIGNUP app id and secret only (never the primary app), without a bearer header', async () => {
@@ -260,5 +257,45 @@ describe('Embedded Signup configuration (two Meta apps)', () => {
     expect(message).not.toContain('p-secret');
     expect(() => validateConfig({ ...cloud, WHATSAPP_APP_ID: 'SAME', ...trio, WHATSAPP_SIGNUP_APP_ID: 'SAME' })).toThrow(/inconsistent/); // same app id, different secrets
     expect(() => validateConfig({ ...cloud, WHATSAPP_APP_ID: 'SAME', WHATSAPP_SIGNUP_APP_ID: 'SAME', WHATSAPP_SIGNUP_APP_SECRET: 'p-secret', WHATSAPP_SIGNUP_VERIFY_TOKEN: 'v' })).not.toThrow(); // a genuine single-app setup
+  });
+});
+
+describe('system-user token flow (60-day Embedded Signup configuration), mocked HTTP', () => {
+  it('uses only access_token from the exchange; token_type / expires_in / extra fields are ignored and never returned', async () => {
+    fetchMock.mockReturnValueOnce(reply(200, { access_token: 'sys-user-token-xyz', token_type: 'bearer', expires_in: 5183944, data_access_expires_at: 1900000000, extra: { a: 1 } }));
+    const r = await new CloudWhatsApp().exchangeSignupCode('code-1');
+    expect(r).toEqual({ accessToken: 'sys-user-token-xyz' });
+    expect(JSON.stringify(r)).not.toMatch(/expires|bearer|extra/);
+  });
+
+  it('follows paging when listing a WABA\'s phone numbers, sending the business token on every page', async () => {
+    const next = 'https://graph.test/v99.0/WABA1/phone_numbers?after=CURSOR';
+    fetchMock.mockReturnValueOnce(reply(200, { data: [{ id: 'P1', display_phone_number: '+91 1' }], paging: { next } })).mockReturnValueOnce(reply(200, { data: [{ id: 'P2' }] }));
+    const out = await new CloudWhatsApp().listWabaPhoneNumbers(acct);
+    expect(out.map((p) => p.id)).toEqual(['P1', 'P2']);
+    expect(call(1).url).toBe(next);
+    expect((call(0).init.headers as any).Authorization).toBe('Bearer business-token-123');
+    expect((call(1).init.headers as any).Authorization).toBe('Bearer business-token-123');
+  });
+
+  it('an empty list is an empty list (not an error)', async () => {
+    fetchMock.mockReturnValueOnce(reply(200, { data: [] }));
+    expect(await new CloudWhatsApp().listWabaPhoneNumbers(acct)).toEqual([]);
+  });
+
+  it('a permission failure while listing (the token\'s system user has no access to the WABA) surfaces Meta\'s code and classification, without echoing the token', async () => {
+    fetchMock.mockReturnValueOnce(reply(403, { error: { code: 200, message: '(#200) Requires whatsapp_business_management permission or asset access' } }));
+    const e = await failure(new CloudWhatsApp().listWabaPhoneNumbers(acct));
+    expect(e).toBeInstanceOf(WaSendError);
+    expect(e.code).toBe('200');
+    expect(e.kind).toBe('auth');
+    expect(e.retryable).toBe(false);
+    expect(JSON.stringify({ m: e.message, c: e.code })).not.toContain('business-token-123');
+  });
+
+  it('a permission failure on the coexistence check is classified the same way', async () => {
+    fetchMock.mockReturnValueOnce(reply(400, { error: { code: 10, message: 'Application does not have permission for this action' } }));
+    const e = await failure(new CloudWhatsApp().getCoexistenceInfo(acct));
+    expect(e.kind).toBe('auth');
   });
 });

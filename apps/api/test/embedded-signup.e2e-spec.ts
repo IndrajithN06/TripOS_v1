@@ -388,8 +388,13 @@ describe('WhatsApp Embedded Signup (coexistence), fake Meta', () => {
       expect(again.done.status).toBe(201);
       expect(again.done.body.account.phoneNumberId).toBe(w2.phone);
       expect(await db.tenant(T.agencyId, (tx) => tx.whatsappAccount.count({ where: { agencyId: T.agencyId } }))).toBe(1);
-      // manual fallback still replaces/updates as before
-      const manual = await T.admin.post('/agency/whatsapp/connect', { displayName: 'Manual line', wabaId: `WABA-${uid()}`, phoneNumberId: `PN-${uid()}`, accessToken: 'EAAG-manual-token-value' });
+      // While the Embedded Signup account is LIVE a pasted token cannot replace it (409); after an explicit disconnect the manual fallback works.
+      const manualBody = { displayName: 'Manual line', wabaId: `WABA-${uid()}`, phoneNumberId: `PN-${uid()}`, accessToken: 'EAAG-manual-token-value' };
+      const refused = await T.admin.post('/agency/whatsapp/connect', manualBody);
+      expect(refused.status).toBe(409);
+      expect(refused.body.error.code).toBe('embedded_account_active');
+      expect((await T.admin.post('/agency/whatsapp/disconnect')).status).toBe(201);
+      const manual = await T.admin.post('/agency/whatsapp/connect', manualBody);
       expect(manual.status).toBe(201);
       expect(manual.body).toMatchObject({ mode: 'cloud', connected: true, onboardingMethod: 'manual', coexistence: false });
       expect((await acct(T.agencyId))).toMatchObject({ onboardingMethod: 'manual', isCoexistence: false, businessId: null, metaAppId: null });
