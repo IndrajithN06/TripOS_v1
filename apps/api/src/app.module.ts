@@ -1,4 +1,4 @@
-import { Global, Injectable, Module, OnApplicationBootstrap } from '@nestjs/common';
+import { Global, Injectable, Module, NotFoundException, OnApplicationBootstrap } from '@nestjs/common';
 import { APP_FILTER, APP_GUARD } from '@nestjs/core';
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { AssetService } from './common/assets';
@@ -19,7 +19,7 @@ import { JobsService } from './modules/jobs/jobs.service';
 import { PlatformController, PlatformService } from './modules/platform/platform.module';
 import { QuotesController } from './modules/quotes/quotes.controller';
 import { PublicQuoteController } from './modules/quotes/public-quote.controller';
-import { QuotesService } from './modules/quotes/quotes.service';
+import { QUOTE_DELETED, QuotesService } from './modules/quotes/quotes.service';
 import { VehiclesController } from './modules/vehicles/vehicles.module';
 import { TemplatesController } from './modules/templates/templates.controller';
 import { TemplatesService } from './modules/templates/templates.service';
@@ -34,7 +34,10 @@ class WorkerBootstrap implements OnApplicationBootstrap {
   constructor(private readonly jobs: JobsService, private readonly quotes: QuotesService, private readonly whatsapp: WhatsappAccountService, private readonly signup: EmbeddedSignupService) {}
   onApplicationBootstrap() {
     // Retry only what is still failing; items already sent are skipped by idempotency in execute().
-    this.jobs.register('quote.retry', async (j) => { await this.quotes.execute(j.agencyId, j.payload.versionId, null, { auto: true }); });
+    this.jobs.register('quote.retry', async (j) => {
+      try { await this.quotes.execute(j.agencyId, j.payload.versionId, null, { auto: true }); }
+      catch (e) { if (e instanceof NotFoundException && (e.getResponse() as { code?: string })?.code === QUOTE_DELETED) return; throw e; } // deleted quote: nothing to send, nothing to reschedule
+    });
     // Flag (never disconnect) any account tied to a Meta app that is not configured here, and say so if the migration is missing.
     if (config().NODE_ENV !== 'test') void this.whatsapp.auditAppIdentitiesSafely();
     if (config().NODE_ENV !== 'test' && process.env.JOBS_WORKER !== 'false') {

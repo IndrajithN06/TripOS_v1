@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, ParseIntPipe, ParseUUIDPipe, Patch, Post, Query, Res } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, ParseIntPipe, ParseUUIDPipe, Patch, Post, Query, Res } from '@nestjs/common';
 import { Response } from 'express';
 import { z } from 'zod';
 import { agencyOf, CurrentUser, parse, Principal, Roles } from '../../common/auth';
@@ -70,6 +70,12 @@ export class QuotesController {
   @Post(':id/status')
   status(@CurrentUser() p: Principal, @Param('id', ParseUUIDPipe) id: string, @Body() b: unknown) {
     return this.svc.setStatus(p, agencyOf(p), id, parse(z.object({ status: z.enum(['draft', 'ready_to_send', 'negotiating', 'accepted', 'declined', 'expired']) }), b).status);
+  }
+
+  /** Soft delete. The optional reason is kept in the audit log only. */
+  @Delete(':id')
+  remove(@CurrentUser() p: Principal, @Param('id', ParseUUIDPipe) id: string, @Body() b: unknown) {
+    return this.svc.remove(p, agencyOf(p), id, parse(z.object({ reason: z.string().max(500).optional() }), b ?? {}).reason);
   }
 
   @Post(':id/duplicate')

@@ -25,7 +25,10 @@ export class AnalyticsService {
       const agency = await tx.agency.findUniqueOrThrow({ where: { id: agencyId } });
       const tz = agency.timezone;
       const tzSql = tz.replace(SAFE_TZ, '');
-      const ownQ = mine ? Prisma.sql`AND q."ownerUserId" = ${p.userId}::uuid` : Prisma.empty;
+      // Every Quote query below uses alias q and ownQ, so this one clause keeps soft-deleted quotes out of all of them.
+      const ownQ = mine ? Prisma.sql`AND q."deletedAt" IS NULL AND q."ownerUserId" = ${p.userId}::uuid` : Prisma.sql`AND q."deletedAt" IS NULL`;
+      const notDeletedAudit = Prisma.sql`AND NOT EXISTS (SELECT 1 FROM "Quote" dq WHERE dq.id::text = a."entityId" AND dq."deletedAt" IS NOT NULL)`;
+      const liveAttempts = Prisma.sql`AND a."quoteVersionId" IN (SELECT dv.id FROM "QuoteVersion" dv JOIN "Quote" dq ON dq.id = dv."quoteId" WHERE dq."deletedAt" IS NULL)`;
       const ownC = mine && agency.salesVisibility === 'assigned' ? Prisma.sql`AND c."assignedUserId" = ${p.userId}::uuid` : Prisma.empty;
       // Columns are timestamp-without-tz holding UTC: tag as UTC, then express in the agency's wall clock.
       const local = (alias: string, col: string) => Prisma.raw(`(${alias}."${col}" AT TIME ZONE 'UTC') AT TIME ZONE '${tzSql}'`);
@@ -35,16 +38,16 @@ export class AnalyticsService {
         tx.$queryRaw<{ d: string; n: number }[]>`SELECT ${day('c', 'createdAt')} d, count(*)::int n FROM "Conversation" c WHERE c."agencyId" = ${agencyId}::uuid AND c."createdAt" >= ${from} AND c."createdAt" <= ${to} ${ownC} GROUP BY 1`,
         tx.$queryRaw<{ d: string; n: number }[]>`SELECT ${day('q', 'createdAt')} d, count(*)::int n FROM "Quote" q WHERE q."agencyId" = ${agencyId}::uuid AND q."createdAt" >= ${from} AND q."createdAt" <= ${to} ${ownQ} GROUP BY 1`,
         tx.$queryRaw<{ d: string; n: number }[]>`SELECT ${day('t', 's')} d, count(*)::int n FROM (SELECT v."quoteId", min(v."sentAt") AS s FROM "QuoteVersion" v JOIN "Quote" q ON q.id = v."quoteId" WHERE v."agencyId" = ${agencyId}::uuid AND v."sentAt" IS NOT NULL ${ownQ} GROUP BY 1) t WHERE t.s >= ${from} AND t.s <= ${to} GROUP BY 1`,
-        tx.$queryRaw<{ d: string; n: number }[]>`SELECT ${day('a', 'createdAt')} d, count(DISTINCT a."entityId")::int n FROM "AuditLog" a WHERE a."agencyId" = ${agencyId}::uuid AND a.action = 'quote.status_changed' AND a.metadata->>'to' = 'accepted' AND a."createdAt" >= ${from} AND a."createdAt" <= ${to} GROUP BY 1`,
+        tx.$queryRaw<{ d: string; n: number }[]>`SELECT ${day('a', 'createdAt')} d, count(DISTINCT a."entityId")::int n FROM "AuditLog" a WHERE a."agencyId" = ${agencyId}::uuid AND a.action = 'quote.status_changed' AND a.metadata->>'to' = 'accepted' ${notDeletedAudit} AND a."createdAt" >= ${from} AND a."createdAt" <= ${to} GROUP BY 1`,
         tx.$queryRaw<{ dow: number; hr: number; n: number }[]>`SELECT extract(dow FROM ${local('m', 'createdAt')})::int dow, extract(hour FROM ${local('m', 'createdAt')})::int hr, count(*)::int n FROM "Message" m WHERE m."agencyId" = ${agencyId}::uuid AND m.direction = 'inbound' AND m."createdAt" >= ${from} AND m."createdAt" <= ${to} GROUP BY 1, 2`,
         tx.$queryRaw<{ name: string; n: number; value: string }[]>`SELECT v."vehicleName" name, count(*)::int n, sum(v.total)::text value FROM "Quote" q JOIN "QuoteVersion" v ON v.id = q."currentVersionId" WHERE q."agencyId" = ${agencyId}::uuid AND q."createdAt" >= ${from} AND q."createdAt" <= ${to} ${ownQ} GROUP BY 1 ORDER BY 2 DESC, 3 DESC LIMIT 6`,
         tx.$queryRaw<{ status: string; n: number }[]>`SELECT q.status, count(*)::int n FROM "Quote" q WHERE q."agencyId" = ${agencyId}::uuid AND q."createdAt" >= ${from} AND q."createdAt" <= ${to} ${ownQ} GROUP BY 1`,
         tx.$queryRaw<{ secs: number }[]>`SELECT extract(epoch FROM (o.t - i.t))::float secs FROM (SELECT "conversationId", min("createdAt") t FROM "Message" WHERE "agencyId" = ${agencyId}::uuid AND direction = 'inbound' GROUP BY 1) i JOIN (SELECT "conversationId", min("createdAt") t FROM "Message" WHERE "agencyId" = ${agencyId}::uuid AND direction = 'outbound' GROUP BY 1) o USING ("conversationId") JOIN "Conversation" c ON c.id = i."conversationId" WHERE o.t > i.t AND c."createdAt" >= ${from} AND c."createdAt" <= ${to} ${ownC}`,
-        tx.$queryRaw<{ status: string; n: number }[]>`SELECT a.status, count(*)::int n FROM "QuoteSendAttempt" a WHERE a."agencyId" = ${agencyId}::uuid AND a."createdAt" >= ${from} AND a."createdAt" <= ${to} GROUP BY 1`,
+        tx.$queryRaw<{ status: string; n: number }[]>`SELECT a.status, count(*)::int n FROM "QuoteSendAttempt" a WHERE a."agencyId" = ${agencyId}::uuid ${liveAttempts} AND a."createdAt" >= ${from} AND a."createdAt" <= ${to} GROUP BY 1`,
         tx.$queryRaw<{ enq: number; qs: number; acc: number; avg: string | null }[]>`SELECT
           (SELECT count(*)::int FROM "Conversation" c WHERE c."agencyId" = ${agencyId}::uuid AND c."createdAt" >= ${prevFrom} AND c."createdAt" < ${prevTo} ${ownC}) enq,
           (SELECT count(*)::int FROM "Quote" q WHERE q."agencyId" = ${agencyId}::uuid AND q."createdAt" >= ${prevFrom} AND q."createdAt" < ${prevTo} ${ownQ}) qs,
-          (SELECT count(DISTINCT a."entityId")::int FROM "AuditLog" a WHERE a."agencyId" = ${agencyId}::uuid AND a.action = 'quote.status_changed' AND a.metadata->>'to' = 'accepted' AND a."createdAt" >= ${prevFrom} AND a."createdAt" < ${prevTo}) acc,
+          (SELECT count(DISTINCT a."entityId")::int FROM "AuditLog" a WHERE a."agencyId" = ${agencyId}::uuid AND a.action = 'quote.status_changed' AND a.metadata->>'to' = 'accepted' ${notDeletedAudit} AND a."createdAt" >= ${prevFrom} AND a."createdAt" < ${prevTo}) acc,
           (SELECT avg(v.total)::text FROM "Quote" q JOIN "QuoteVersion" v ON v.id = q."currentVersionId" WHERE q."agencyId" = ${agencyId}::uuid AND q."createdAt" >= ${prevFrom} AND q."createdAt" < ${prevTo} ${ownQ}) avg`,
         tx.$queryRaw<{ created: number; sent: number; accepted: number; value: string | null; avg: string | null }[]>`SELECT count(*)::int created,
           count(*) FILTER (WHERE EXISTS (SELECT 1 FROM "QuoteVersion" v WHERE v."quoteId" = q.id AND v."sentAt" IS NOT NULL))::int sent,
@@ -74,7 +77,7 @@ export class AnalyticsService {
       const enquiryTotal = series.reduce((a, r) => a + r.enquiries, 0);
 
       const openRows = await tx.quote.findMany({
-        where: { agencyId, ...(mine ? { ownerUserId: p.userId } : {}), status: { in: ['sent', 'negotiating'] }, OR: [{ expiryAt: null }, { expiryAt: { gt: new Date() } }] },
+        where: { agencyId, deletedAt: null, ...(mine ? { ownerUserId: p.userId } : {}), status: { in: ['sent', 'negotiating'] }, OR: [{ expiryAt: null }, { expiryAt: { gt: new Date() } }] },
         select: { status: true, currentVersionId: true },
       });
       const vers = await tx.quoteVersion.findMany({ where: { id: { in: openRows.map((o) => o.currentVersionId!).filter(Boolean) } }, select: { id: true, total: true } });

@@ -7,12 +7,14 @@ import { ErrorBox, Loading, Modal, StatusBadge, useAction, useMe } from '@/compo
 import { QuoteBuilder } from '@/components/QuoteBuilder';
 import { QuotePreview } from '@/components/QuotePreview';
 import { SendQuoteModal } from '@/components/SendQuoteModal';
+import { ConfirmDeleteQuote } from '@/components/ConfirmDeleteQuote';
+import { canDeleteQuote } from '@/lib/quote-delete';
 
 export default function QuoteDetail() {
   const { id } = useParams<{ id: string }>();
   const me = useMe(), run = useAction(), router = useRouter(), tz = me.agency?.timezone;
   const { data: q, error, reload } = useApi<any>(`/quotes/${id}`);
-  const [edit, setEdit] = useState(false), [preview, setPreview] = useState<any>(null), [diff, setDiff] = useState<any>(null), [sendV, setSendV] = useState<number | null>(null);
+  const [confirmDel, setConfirmDel] = useState(false), [edit, setEdit] = useState(false), [preview, setPreview] = useState<any>(null), [diff, setDiff] = useState<any>(null), [sendV, setSendV] = useState<number | null>(null);
   if (error) return <ErrorBox e={error} retry={reload} />;
   if (!q) return <Loading />;
   const cur = q.versions.find((v: any) => v.id === q.currentVersionId);
@@ -32,6 +34,7 @@ export default function QuoteDetail() {
           <button className="btn primary" onClick={() => setEdit(true)}>{cur.immutable ? 'Edit / Requote' : 'Edit draft'}</button>
           <button className="btn" onClick={() => act(async () => { const d = await api(`/quotes/${id}/duplicate`, { body: {} }); router.push(`/quotes/${d.id}`); }, 'Quote duplicated')}>Duplicate</button>
           <a className="btn" target="_blank" rel="noreferrer" href={`/api/quotes/${id}/versions/${cur.versionNumber}/pdf`}>Open PDF</a>
+          {canDeleteQuote(me.user, q.ownerUserId) && <button className="btn danger" onClick={() => setConfirmDel(true)}>Delete</button>}
         </div>
       </div>
 
@@ -83,6 +86,7 @@ export default function QuoteDetail() {
         </table></div>
       </div>
 
+      {confirmDel && <ConfirmDeleteQuote quote={{ id, quoteNumber: q.quoteNumber, customer: q.customer.name, total: cur.total, status: q.status }} onClose={() => setConfirmDel(false)} onDeleted={() => router.push('/quotes')} />}
       {sendV !== null && <SendQuoteModal quoteId={id} versionNumber={sendV} onClose={() => setSendV(null)} onSent={() => void reload()} />}
       {preview && <Modal title={`Preview · ${q.quoteNumber} v${preview.versionNumber}`} onClose={() => setPreview(null)}><QuotePreview p={preview} /></Modal>}
       {diff && (

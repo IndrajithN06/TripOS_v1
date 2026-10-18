@@ -292,12 +292,17 @@ model Quote {
   currentVersionId String?   @db.Uuid
   expiryAt         DateTime?
   followUpAt       DateTime?
+  /// Soft delete: set = hidden from every normal view and from the customer's link. The row, its versions, send attempts,
+  /// messages, files and audit history are all kept. The quote number stays reserved (never reused).
+  deletedAt        DateTime?
+  deletedByUserId  String?   @db.Uuid
   createdAt        DateTime  @default(now())
   updatedAt        DateTime  @updatedAt
 
   @@unique([agencyId, quoteNumber])
   @@index([agencyId, status])
   @@index([agencyId, createdAt])
+  @@index([agencyId, deletedAt])
 }
 
 model QuoteVersion {

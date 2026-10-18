@@ -30,7 +30,7 @@ export class AiService {
       const vehicles = await tx.vehicleType.findMany({ where: { agencyId, active: true }, select: { name: true } });
       let quote: Record<string, unknown> | undefined;
       if (extra.quoteId) {
-        const q = await tx.quote.findFirst({ where: { id: extra.quoteId, agencyId } });
+        const q = await tx.quote.findFirst({ where: { id: extra.quoteId, agencyId, deletedAt: null } });
         const v = q?.currentVersionId ? await tx.quoteVersion.findFirst({ where: { id: q.currentVersionId, agencyId } }) : null;
         if (v) quote = { vehicle: v.vehicleName, total: v.total.toString(), version: v.versionNumber };
       }

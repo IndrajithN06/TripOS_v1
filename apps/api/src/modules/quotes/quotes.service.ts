@@ -14,6 +14,9 @@ import { money, toSnapshot } from '../vehicles/vehicles.module';
 import { quoteMessageText, renderQuotePdf, RenderModel } from './quote-render';
 import { autoRetryDelayMs, SendOutcome, withinAutoRetryBudget } from './retry-policy';
 
+/** Error code thrown when work is attempted on a soft-deleted quote (a queued retry treats it as "nothing to do"). */
+export const QUOTE_DELETED = 'quote_deleted';
+
 const iso = z.string().datetime({ offset: true });
 export const tripSchema = z.object({
   tripType: z.enum(['local_8h_80km', 'local_4h_40km', 'outstation']),
@@ -212,8 +215,32 @@ export class QuotesService {
     return { OR: [{ ownerUserId: p.userId }, { conversationId: { in: convs.map((c) => c.id) } }] };
   }
 
+  /**
+   * Serialises "delete this quote" against both send paths for ONE quote. Every transaction that can delete the quote or create
+   * send work takes this lock FIRST, before reading anything it will decide on, so the reads that follow already see whatever the
+   * other side committed (each statement sees the latest committed data). Whoever gets it second therefore sees the true state:
+   * a send after a delete finds the quote deleted (404, no send work is created); a delete after a send finds the version
+   * 'sending' (409).
+   *
+   * It is a transaction-scoped advisory lock (released at commit or rollback), keyed by agency + quote. It is always the first
+   * lock a transaction takes and is never requested while holding another one, so lock order is the same everywhere and it
+   * cannot deadlock with the version/quote row updates that follow. The agency in the key keeps one agency from ever queueing
+   * behind another's quote.
+   *
+   * It protects only the transaction that holds it. The actual sending runs afterwards in separate transactions (execute), so
+   * that part is guarded differently: the planning transaction commits status 'sending' (which makes delete answer 409 until the
+   * send finishes), and execute() re-checks deletion before every item.
+   */
+  private async serialiseQuote(tx: Tx, agencyId: string, quoteId: string) {
+    await tx.$queryRaw`SELECT 1 AS locked FROM (SELECT pg_advisory_xact_lock(hashtextextended(${`${agencyId}:${quoteId}`}, 0))) l`;
+  }
+
+  private async isDeleted(agencyId: string, quoteId: string) {
+    return this.db.tenant(agencyId, async (tx) => !!(await tx.quote.findFirst({ where: { id: quoteId, agencyId, deletedAt: { not: null } }, select: { id: true } })));
+  }
+
   private async current(tx: Tx, p: Principal, agencyId: string, quoteId: string) {
-    const quote = await tx.quote.findFirst({ where: { id: quoteId, agencyId, ...(await this.visibleFilter(tx, p, agencyId)) } });
+    const quote = await tx.quote.findFirst({ where: { id: quoteId, agencyId, deletedAt: null, ...(await this.visibleFilter(tx, p, agencyId)) } });
     if (!quote) throw new NotFoundException({ code: 'not_found', message: 'Quote not found' });
     const version = await tx.quoteVersion.findFirstOrThrow({ where: { id: quote.currentVersionId!, agencyId } });
     return { quote, version };
@@ -222,7 +249,7 @@ export class QuotesService {
   async list(p: Principal, agencyId: string, q: { search?: string; status?: string; page: number; pageSize: number; conversationId?: string }) {
     return this.db.tenant(agencyId, async (tx) => {
       const vis = await this.visibleFilter(tx, p, agencyId);
-      const where: any = { agencyId, ...vis };
+      const where: any = { agencyId, deletedAt: null, ...vis };
       if (q.status) where.status = q.status;
       if (q.conversationId) where.conversationId = q.conversationId;
       if (q.search) {
@@ -244,7 +271,7 @@ export class QuotesService {
         const trip = v.trip as any;
         return {
           id: r.id, quoteNumber: r.quoteNumber, status: effectiveStatus(r), customer: customers.find((c) => c.id === r.customerId)?.name, customerId: r.customerId,
-          conversationId: r.conversationId, owner: owners.find((o) => o.id === r.ownerUserId)?.name, version: v.versionNumber, versionStatus: v.status, total: dec(v.total), vehicleName: v.vehicleName,
+          conversationId: r.conversationId, ownerUserId: r.ownerUserId, owner: owners.find((o) => o.id === r.ownerUserId)?.name, version: v.versionNumber, versionStatus: v.status, total: dec(v.total), vehicleName: v.vehicleName,
           destination: (trip.destinations ?? []).join(', '), pickupAt: trip.pickupAt, lastSentAt: sent.find((s) => s.quoteId === r.id)?._max.sentAt ?? null,
           followUpAt: r.followUpAt, expiryAt: r.expiryAt, createdAt: r.createdAt,
         };
@@ -360,6 +387,7 @@ export class QuotesService {
 
   async send(p: Principal, agencyId: string, quoteId: string, versionNumber: number, opts: { followUpAt?: string | null }) {
     const versionId = await this.db.tenant(agencyId, async (tx) => {
+      await this.serialiseQuote(tx, agencyId, quoteId); // first: a delete that won is seen below as 404, and nothing is created
       const { quote, version } = await this.current(tx, p, agencyId, quoteId);
       if (version.versionNumber !== versionNumber) throw new ConflictException({ code: 'not_current', message: 'Only the current version can be sent' });
       if (version.sentAt || version.status === 'sending') throw new ConflictException({ code: 'already_sent', message: 'This version was already sent. Use retry for failed items, or create a new version.' });
@@ -419,6 +447,7 @@ export class QuotesService {
    */
   async sendWithTemplate(p: Principal, agencyId: string, quoteId: string, versionNumber: number, opts: { templateId: string; includePdf?: boolean; followUpAt?: string | null; approvedTotal?: string }) {
     const planned = await this.db.tenant(agencyId, async (tx) => {
+      await this.serialiseQuote(tx, agencyId, quoteId); // first: a delete that won is seen below as 404, and nothing is created
       const { quote, version } = await this.current(tx, p, agencyId, quoteId);
       if (version.versionNumber !== versionNumber) throw new ConflictException({ code: 'not_current', message: 'Only the current version can be sent' });
       if (version.sentAt || version.status === 'sending') throw new ConflictException({ code: 'already_sent', message: 'This version was already sent. Use retry for failed items, or create a new version.' });
@@ -479,6 +508,7 @@ export class QuotesService {
     const v = await tx.quoteVersion.findUnique({ where: { publicToken: token } });
     if (!v || !v.sentAt) throw new NotFoundException({ code: 'not_found', message: 'This quotation link is not valid.' });
     const quote = await tx.quote.findUniqueOrThrow({ where: { id: v.quoteId } });
+    if (quote.deletedAt) throw new NotFoundException({ code: 'not_found', message: 'This quotation link is not valid.' });
     return { v, quote };
   }
 
@@ -527,6 +557,7 @@ export class QuotesService {
     const ctx = await this.db.tenant(agencyId, async (tx) => {
       const v = await tx.quoteVersion.findFirstOrThrow({ where: { id: versionId, agencyId } });
       const quote = await tx.quote.findFirstOrThrow({ where: { id: v.quoteId, agencyId } });
+      if (quote.deletedAt) throw new NotFoundException({ code: QUOTE_DELETED, message: 'Quote not found' }); // nothing is sent, and no further retry is scheduled
       const attempts = await tx.quoteSendAttempt.findMany({ where: { quoteVersionId: versionId, agencyId, status: { in: ['pending', 'failed'] } }, orderBy: { createdAt: 'asc' } });
       const account = await tx.whatsappAccount.findFirst({ where: { agencyId }, select: { connectionStatus: true } });
       const m = await this.model(tx, agencyId, quote.id, v.versionNumber);
@@ -542,6 +573,9 @@ export class QuotesService {
 
     const outcomes: SendOutcome[] = [];
     for (const a of items) {
+      // A retry or an in-progress send holds no lock while it talks to WhatsApp, so a delete can land between two items. Stop
+      // before the next one: nothing more is sent for a deleted quote (items already delivered stay recorded; finalise settles the rest).
+      if (await this.isDeleted(agencyId, ctx.quote.id)) break;
       let r: OutboundResult;
       try {
         const payload = a.kind === 'template' ? await this.templatePayload(agencyId, ctx.quote.id, ctx.v.versionNumber, a.templateId)
@@ -592,9 +626,35 @@ export class QuotesService {
     return out;
   }
 
+  // ------------------------------------------------------------------ soft delete
+
+  /**
+   * Hides a quote from every normal view and from the customer's link. Nothing is removed: the quote row, its versions,
+   * send attempts, messages, files and audit history all stay, and the quote number stays reserved.
+   *
+   * Authorisation: the shared guard (current) gives tenant isolation and the agency's sales-visibility rule, so a quote that is
+   * missing, in another agency, hidden from this user or already deleted is the same 404. On top of that an agency admin may
+   * delete any quote in the agency, while a sales user may delete only quotes they own.
+   */
+  async remove(p: Principal, agencyId: string, quoteId: string, reason?: string) {
+    return this.db.tenant(agencyId, async (tx) => {
+      await this.serialiseQuote(tx, agencyId, quoteId); // first: a send that won has already committed 'sending', which is seen below as 409
+      const { quote, version } = await this.current(tx, p, agencyId, quoteId);
+      if (p.role === 'SALES' && quote.ownerUserId !== p.userId) throw new ForbiddenException({ code: 'forbidden', message: 'You can only delete quotes you created' });
+      if (version.status === 'sending') throw new ConflictException({ code: 'quote_sending', message: 'This quote is being sent right now. Try again in a minute.' });
+      // Atomic and idempotent: only the request that flips deletedAt from NULL wins; a concurrent duplicate sees count 0.
+      const r = await tx.quote.updateMany({ where: { id: quote.id, agencyId, deletedAt: null }, data: { deletedAt: new Date(), deletedByUserId: p.userId } });
+      if (r.count !== 1) throw new NotFoundException({ code: 'not_found', message: 'Quote not found' });
+      const wasSent = (await tx.quoteVersion.count({ where: { quoteId: quote.id, agencyId, sentAt: { not: null } } })) > 0;
+      const note = reason?.trim();
+      await audit(tx, { agencyId, actorUserId: p.userId, action: 'quote.deleted', entityType: 'quote', entityId: quote.id, metadata: { quoteNumber: quote.quoteNumber, status: quote.status, version: version.versionNumber, total: dec(version.total), wasSent, ...(note ? { reason: note } : {}) } });
+      return { id: quote.id, quoteNumber: quote.quoteNumber, deleted: true };
+    });
+  }
+
   /** Called periodically by the worker. */
   async expireOverdue() {
-    return this.db.system(async (tx) => (await tx.quote.updateMany({ where: { status: { in: ['sent', 'negotiating'] }, expiryAt: { lt: new Date() } }, data: { status: 'expired' } })).count);
+    return this.db.system(async (tx) => (await tx.quote.updateMany({ where: { deletedAt: null, status: { in: ['sent', 'negotiating'] }, expiryAt: { lt: new Date() } }, data: { status: 'expired' } })).count);
   }
 }
 

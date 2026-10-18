@@ -20,19 +20,21 @@ export class DashboardService {
     return this.db.tenant(agencyId, async (tx) => {
       const agency = await tx.agency.findUniqueOrThrow({ where: { id: agencyId } });
       const limitedConv: any = mine && agency.salesVisibility === 'assigned' ? { assignedUserId: p.userId } : {};
-      const quoteScope: any = mine ? { ownerUserId: p.userId } : {};
+      const quoteScope: any = { deletedAt: null, ...(mine ? { ownerUserId: p.userId } : {}) }; // deleted quotes never count
+      const deletedIds = (await tx.quote.findMany({ where: { agencyId, deletedAt: { not: null } }, select: { id: true } })).map((d) => d.id);
+      const liveVersion: any = deletedIds.length ? { quoteId: { notIn: deletedIds } } : {};
       const open = { status: { in: ['sent', 'negotiating'] }, OR: [{ expiryAt: null }, { expiryAt: { gt: now } }] };
 
       const [newEnquiries, openConversations, quotesCreated, versionsCreated, awaiting, followUpsDue, openQuotes, acceptedLogs, failedVersions, failedMessages, activity] = await Promise.all([
         tx.conversation.count({ where: { agencyId, ...limitedConv, createdAt: { gte: from, lte: to } } }),
         tx.conversation.count({ where: { agencyId, ...limitedConv, status: { not: 'closed' } } }),
         tx.quote.count({ where: { agencyId, ...quoteScope, createdAt: { gte: from, lte: to } } }),
-        tx.quoteVersion.count({ where: { agencyId, ...(mine ? { createdById: p.userId } : {}), createdAt: { gte: from, lte: to } } }),
+        tx.quoteVersion.count({ where: { agencyId, ...liveVersion, ...(mine ? { createdById: p.userId } : {}), createdAt: { gte: from, lte: to } } }),
         tx.quote.count({ where: { agencyId, ...quoteScope, ...open } }),
         tx.quote.count({ where: { agencyId, ...quoteScope, ...open, followUpAt: { lte: now } } }),
         tx.quote.findMany({ where: { agencyId, ...quoteScope, ...open }, select: { currentVersionId: true } }),
-        tx.auditLog.findMany({ where: { agencyId, action: 'quote.status_changed', createdAt: { gte: from, lte: to }, metadata: { path: ['to'], equals: 'accepted' } }, select: { entityId: true } }),
-        tx.quoteVersion.count({ where: { agencyId, status: { in: ['failed', 'partially_sent'] }, createdAt: { gte: from, lte: to } } }),
+        tx.auditLog.findMany({ where: { agencyId, action: 'quote.status_changed', createdAt: { gte: from, lte: to }, metadata: { path: ['to'], equals: 'accepted' }, ...(deletedIds.length ? { entityId: { notIn: deletedIds } } : {}) }, select: { entityId: true } }),
+        tx.quoteVersion.count({ where: { agencyId, ...liveVersion, status: { in: ['failed', 'partially_sent'] }, createdAt: { gte: from, lte: to } } }),
         // Unresolved only: a failed message stops counting once a later outbound message in the same chat was accepted.
         tx.$queryRaw<{ n: number }[]>`SELECT count(*)::int n FROM "Message" m WHERE m."agencyId" = ${agencyId}::uuid AND m.direction = 'outbound' AND m.status = 'failed' AND m."createdAt" >= ${from} AND m."createdAt" <= ${to} AND NOT EXISTS (SELECT 1 FROM "Message" r WHERE r."conversationId" = m."conversationId" AND r.direction = 'outbound' AND r.status <> 'failed' AND r."createdAt" > m."createdAt")`.then((r) => r[0].n),
         mine ? Promise.resolve([]) : tx.auditLog.findMany({ where: { agencyId }, orderBy: { createdAt: 'desc' }, take: 12 }),

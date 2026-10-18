@@ -35,7 +35,7 @@ export class InboxService {
       if (q.filter === 'open') where.status = { not: 'closed' };
       if (q.filter === 'closed') where.status = 'closed';
       if (q.filter === 'quoted') {
-        const quoted = await tx.quote.findMany({ where: { agencyId, conversationId: { not: null } }, select: { conversationId: true } });
+        const quoted = await tx.quote.findMany({ where: { agencyId, deletedAt: null, conversationId: { not: null } }, select: { conversationId: true } });
         where.id = { in: quoted.map((x) => x.conversationId!) };
       }
       if (q.search) {
@@ -49,7 +49,7 @@ export class InboxService {
         tx.customer.findMany({ where: { id: { in: rows.map((r) => r.customerId) } } }),
         tx.user.findMany({ where: { id: { in: rows.map((r) => r.assignedUserId).filter(Boolean) as string[] } }, select: { id: true, name: true } }),
         Promise.all(ids.map((id) => tx.message.findFirst({ where: { conversationId: id, agencyId }, orderBy: { createdAt: 'desc' } }))),
-        tx.quote.findMany({ where: { agencyId, conversationId: { in: ids } }, orderBy: { createdAt: 'desc' }, select: { conversationId: true, status: true, quoteNumber: true } }),
+        tx.quote.findMany({ where: { agencyId, deletedAt: null, conversationId: { in: ids } }, orderBy: { createdAt: 'desc' }, select: { conversationId: true, status: true, quoteNumber: true } }),
       ]);
       return {
         total, page: q.page, pageSize: q.pageSize,
@@ -68,7 +68,7 @@ export class InboxService {
       const [customer, notes, quotes, assignee] = await Promise.all([
         tx.customer.findFirstOrThrow({ where: { id: c.customerId, agencyId } }),
         tx.conversationNote.findMany({ where: { agencyId, conversationId: id }, orderBy: { createdAt: 'asc' } }),
-        tx.quote.findMany({ where: { agencyId, conversationId: id }, orderBy: { createdAt: 'desc' }, select: { id: true, quoteNumber: true, status: true, currentVersionId: true } }),
+        tx.quote.findMany({ where: { agencyId, deletedAt: null, conversationId: id }, orderBy: { createdAt: 'desc' }, select: { id: true, quoteNumber: true, status: true, currentVersionId: true, ownerUserId: true } }),
         c.assignedUserId ? tx.user.findFirst({ where: { id: c.assignedUserId }, select: { id: true, name: true } }) : null,
       ]);
       const authors = await tx.user.findMany({ where: { id: { in: notes.map((n) => n.authorId) } }, select: { id: true, name: true } });
@@ -90,7 +90,7 @@ export class InboxService {
       const assets = await tx.asset.findMany({ where: { agencyId, id: { in: assetIds } } });
       const links = await tx.quoteSendAttempt.findMany({ where: { agencyId, messageId: { in: rows.map((r) => r.id) } } });
       const versions = await tx.quoteVersion.findMany({ where: { agencyId, id: { in: links.map((l) => l.quoteVersionId) } }, select: { id: true, versionNumber: true, quoteId: true } });
-      const quotes = await tx.quote.findMany({ where: { agencyId, id: { in: versions.map((v) => v.quoteId) } }, select: { id: true, quoteNumber: true } });
+      const quotes = await tx.quote.findMany({ where: { agencyId, id: { in: versions.map((v) => v.quoteId) } }, select: { id: true, quoteNumber: true, deletedAt: true } });
       const items = await Promise.all(rows.reverse().map(async (m) => {
         const a = assets.find((x) => x.id === m.mediaAssetId);
         const link = links.find((l) => l.messageId === m.id);
@@ -98,7 +98,7 @@ export class InboxService {
         return {
           id: m.id, providerMessageId: m.simulated ? m.providerMessageId : undefined, direction: m.direction, type: m.type, text: m.text, status: m.status, errorCode: m.errorCode, errorMessage: m.errorMessage, simulated: m.simulated, createdAt: m.createdAt,
           media: a ? { assetId: a.id, mimeType: a.mimeType, url: await this.assets.url(a) } : null,
-          quote: ver ? { quoteId: ver.quoteId, quoteNumber: quotes.find((q2) => q2.id === ver.quoteId)?.quoteNumber, version: ver.versionNumber } : null,
+          quote: ver ? { quoteId: quotes.find((q2) => q2.id === ver.quoteId)?.deletedAt ? null : ver.quoteId, deleted: !!quotes.find((q2) => q2.id === ver.quoteId)?.deletedAt, quoteNumber: quotes.find((q2) => q2.id === ver.quoteId)?.quoteNumber, version: ver.versionNumber } : null,
         };
       }));
       return { items, hasMore: rows.length === q.limit };
@@ -155,7 +155,7 @@ export class InboxController {
       if (!t) throw new NotFoundException({ code: 'not_found', message: 'Template not found' });
       let versionNumber = b.versionNumber;
       if (b.quoteId) {
-        const q = await tx.quote.findFirst({ where: { id: b.quoteId, agencyId, customerId: conv.customerId } });
+        const q = await tx.quote.findFirst({ where: { id: b.quoteId, agencyId, deletedAt: null, customerId: conv.customerId } });
         if (!q) throw new NotFoundException({ code: 'not_found', message: 'Quote not found for this customer' });
         const v = versionNumber ? null : await tx.quoteVersion.findFirstOrThrow({ where: { id: q.currentVersionId!, agencyId } });
         versionNumber ??= v!.versionNumber;

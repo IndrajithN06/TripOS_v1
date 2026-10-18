@@ -185,7 +185,7 @@ export class TemplatesService {
     }
     let quote, version;
     if (o.quoteId) {
-      quote = await tx.quote.findFirst({ where: { id: o.quoteId, agencyId } });
+      quote = await tx.quote.findFirst({ where: { id: o.quoteId, agencyId, deletedAt: null } });
       if (!quote) throw new NotFoundException({ code: 'not_found', message: 'Quote not found' });
       version = await tx.quoteVersion.findFirst({ where: o.versionNumber ? { quoteId: quote.id, agencyId, versionNumber: o.versionNumber } : { id: quote.currentVersionId!, agencyId } });
       if (!version) throw new NotFoundException({ code: 'not_found', message: 'Quote version not found' });

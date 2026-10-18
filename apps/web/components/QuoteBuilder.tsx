@@ -45,7 +45,7 @@ export function QuoteBuilder({ conversationId, customerId, quoteId, prefill, onC
   const [calc, setCalc] = useState<any>(null), [calcErr, setCalcErr] = useState('');
   const [preview, setPreview] = useState<any>(null), [sendResult, setSendResult] = useState<any>(null), [busy, setBusy] = useState(false);
   const [noPhotoPrompt, setNoPhotoPrompt] = useState(false);
-  const photoSection = useRef<HTMLElement>(null);
+  const photoSection = useRef<HTMLElement>(null), summary = useRef<HTMLElement>(null);
   const promptMode = useRef<'template' | 'plain'>('template');
   const [followUp, setFollowUp] = useState('');
   const [sendModal, setSendModal] = useState<{ quoteId: string; versionNumber: number } | null>(null);
@@ -153,16 +153,17 @@ export function QuoteBuilder({ conversationId, customerId, quoteId, prefill, onC
   useEffect(() => { if (days && form.tripType === 'outstation') setForm((f) => ({ ...f, days: String(days) })); }, [days, form.tripType]);
 
   return (
-    <aside className="drawer" aria-label="Quote builder">
-      <div className="row between" style={{ marginBottom: 14 }}>
-        <div className="row"><h1>{quote ? `Quote ${quote.quoteNumber}` : 'New quotation'}</h1>{quote && <StatusBadge s={quote.status} />}{current && <span className="badge">v{current.versionNumber}{locked ? ' · sent' : ''}</span>}</div>
+    <aside className="drawer qb-drawer" aria-label="Quote builder">
+      <header className="qb-head">
+        <div className="qb-title"><h1>{quote ? `Quote ${quote.quoteNumber}` : 'New quotation'}</h1>{quote && <StatusBadge s={quote.status} />}{current && <span className="badge">v{current.versionNumber}{locked ? ' · sent' : ''}</span>}</div>
         <button className="btn" onClick={onClose}>Close</button>
-      </div>
+      </header>
+      <div className="qb-body">
       {locked && <div className="banner warn" style={{ marginBottom: 12 }}>Version {current.versionNumber} was already sent and cannot be changed. Saving will create version {current.versionNumber + 1}; the sent version stays exactly as the customer received it.</div>}
       <div className="qb">
         <div className="stack">
           <section className="card stack">
-            <h2>01 · Trip details</h2>
+            <h2><span className="qb-step" aria-hidden="true">1</span>Trip details</h2>
             <div className="fields">
               <Field label="Trip type"><select value={form.tripType} onChange={(e) => set('tripType', e.target.value as Form['tripType'])}>
                 <option value="outstation">Outstation</option><option value="local_8h_80km">Local · 8 hr / 80 km</option><option value="local_4h_40km">Local · 4 hr / 40 km</option></select></Field>
@@ -184,7 +185,7 @@ export function QuoteBuilder({ conversationId, customerId, quoteId, prefill, onC
           </section>
 
           <section className="card stack">
-            <h2>02 · Vehicle & pricing</h2>
+            <h2><span className="qb-step" aria-hidden="true">2</span>Vehicle &amp; pricing</h2>
             <Field label="Vehicle type"><select value={form.vehicleTypeId} onChange={(e) => {
               // A new vehicle starts with ITS primary photo selected; photos of the previous vehicle are never kept.
               const next = vehicles?.find((v) => v.id === e.target.value);
@@ -194,8 +195,8 @@ export function QuoteBuilder({ conversationId, customerId, quoteId, prefill, onC
               <option value="">Select a vehicle…</option>{vehicles?.map((v) => <option key={v.id} value={v.id}>{v.name} · {v.seats} seats</option>)}</select></Field>
             {vehicle && (
               <>
-                <div className="small muted">Rate card (snapshotted when the version is created): 8h/80km {inr(vehicle.rate.local8h80kmPrice)} · 4h/40km {inr(vehicle.rate.local4h40kmPrice)} · {inr(vehicle.rate.outstationRatePerKm)}/km · min {vehicle.rate.minKmPerDay} km/day · batta {inr(vehicle.rate.driverBattaPerDay)}</div>
-                <div><strong className="small">Quote-specific rates</strong> {!canOverride && <span className="badge amber">Not permitted for your role</span>}</div>
+                <div className="qb-note small muted">Rate card (snapshotted when the version is created): 8h/80km {inr(vehicle.rate.local8h80kmPrice)} · 4h/40km {inr(vehicle.rate.local4h40kmPrice)} · {inr(vehicle.rate.outstationRatePerKm)}/km · min {vehicle.rate.minKmPerDay} km/day · batta {inr(vehicle.rate.driverBattaPerDay)}</div>
+                <div className="qb-sub"><strong className="small">Quote-specific rates</strong> {!canOverride && <span className="badge amber">Not permitted for your role</span>}</div>
                 <div className="fields">
                   {OVERRIDE_FIELDS.filter(([, , t]) => t.includes(form.tripType)).map(([k, label]) => (
                     <Field key={k} label={`${label} (default ${inr(vehicle.rate[k])})`}>
@@ -206,11 +207,11 @@ export function QuoteBuilder({ conversationId, customerId, quoteId, prefill, onC
                 {!isLocal && <label className="inline"><input type="checkbox" checked={form.includeDriverBatta} onChange={(e) => set('includeDriverBatta', e.target.checked)} />Include driver batta</label>}
               </>
             )}
-            <div><strong className="small">Extra charges</strong> <button className="btn sm" onClick={() => set('extraCharges', [...form.extraCharges, { label: '', amount: '', taxable: true }])}>+ Add</button></div>
+            <div className="qb-sub row between"><strong className="small">Extra charges</strong> <button className="btn sm" onClick={() => set('extraCharges', [...form.extraCharges, { label: '', amount: '', taxable: true }])}>+ Add</button></div>
             {form.extraCharges.map((c, i) => (
-              <div className="row" key={i}>
-                <input style={{ flex: 2 }} placeholder="Toll / Parking / Permit…" value={c.label} onChange={(e) => set('extraCharges', form.extraCharges.map((x, j) => (j === i ? { ...x, label: e.target.value } : x)))} />
-                <input style={{ flex: 1 }} type="number" min={0} placeholder="Amount" value={c.amount} onChange={(e) => set('extraCharges', form.extraCharges.map((x, j) => (j === i ? { ...x, amount: e.target.value } : x)))} />
+              <div className="charge-row" key={i}>
+                <input placeholder="Toll / Parking / Permit…" value={c.label} onChange={(e) => set('extraCharges', form.extraCharges.map((x, j) => (j === i ? { ...x, label: e.target.value } : x)))} />
+                <input type="number" min={0} placeholder="Amount" value={c.amount} onChange={(e) => set('extraCharges', form.extraCharges.map((x, j) => (j === i ? { ...x, amount: e.target.value } : x)))} />
                 <label className="inline"><input type="checkbox" checked={c.taxable} onChange={(e) => set('extraCharges', form.extraCharges.map((x, j) => (j === i ? { ...x, taxable: e.target.checked } : x)))} />taxable</label>
                 <button className="btn sm danger" aria-label="Remove charge" onClick={() => set('extraCharges', form.extraCharges.filter((_, j) => j !== i))}>✕</button>
               </div>
@@ -224,7 +225,7 @@ export function QuoteBuilder({ conversationId, customerId, quoteId, prefill, onC
 
           <section className="card stack" ref={photoSection}>
             <div className="row between">
-              <h2 style={{ margin: 0 }}>03 · Vehicle photos for this customer</h2>
+              <h2 style={{ margin: 0 }}><span className="qb-step" aria-hidden="true">3</span>Vehicle photos for this customer</h2>
               {vehicle && photos.total > 0 && <span className={`badge ${photos.selected > 0 ? 'green' : 'amber'}`} aria-live="polite" data-testid="photo-count">{photos.label}</span>}
             </div>
             {!vehicle ? <div className="muted small">Select a vehicle to choose photos.</div> : vehicle.images.length === 0 ? <div className="muted small">This vehicle has no photos yet. Add some in Vehicle Types.</div> : (
@@ -250,7 +251,7 @@ export function QuoteBuilder({ conversationId, customerId, quoteId, prefill, onC
           </section>
 
           <section className="card stack">
-            <h2>04 · Notes & terms</h2>
+            <h2><span className="qb-step" aria-hidden="true">4</span>Notes &amp; terms</h2>
             <div className="fields">
               <Field label="Inclusions"><textarea value={form.inclusions} onChange={(e) => set('inclusions', e.target.value)} placeholder="Defaults from agency branding" /></Field>
               <Field label="Exclusions"><textarea value={form.exclusions} onChange={(e) => set('exclusions', e.target.value)} placeholder="Defaults from agency branding" /></Field>
@@ -261,7 +262,7 @@ export function QuoteBuilder({ conversationId, customerId, quoteId, prefill, onC
         </div>
 
         <div className="side stack">
-          <section className="card stack" aria-live="polite">
+          <section className="card stack qb-summary" aria-live="polite" ref={summary}>
             <h2>Price summary</h2>
             {calcErr && <div className="banner err">{calcErr}</div>}
             {!calc && !calcErr && <div className="muted small">Fill in the trip and vehicle to see the price.</div>}
@@ -306,6 +307,11 @@ export function QuoteBuilder({ conversationId, customerId, quoteId, prefill, onC
             <section className="card"><h2>Versions</h2>{quote.versions.map((v: any) => <div className="row between small" key={v.id}><span>v{v.versionNumber} · {fmtDateTime(v.createdAt, tz)}</span><span className="mono">{inr(v.total)} <StatusBadge s={v.status} /></span></div>)}</section>
           )}
         </div>
+      </div>
+      </div>
+      <div className="qb-totalbar" role="status">
+        <div><span className="small muted">Total</span><strong className="mono">{calc ? inr(calc.total) : '—'}</strong></div>
+        <button className="btn primary sm" onClick={() => summary.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })}>Review &amp; send ↓</button>
       </div>
       {sendModal && <SendQuoteModal quoteId={sendModal.quoteId} versionNumber={sendModal.versionNumber} onClose={() => setSendModal(null)} onSent={() => { void load(sendModal.quoteId); onChanged?.(); }} />}
       {preview && <Modal title="Customer preview" onClose={() => setPreview(null)}>

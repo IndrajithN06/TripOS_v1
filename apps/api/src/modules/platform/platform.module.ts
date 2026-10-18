@@ -49,7 +49,7 @@ export class PlatformService {
       });
       return Promise.all(agencies.map(async (a) => {
         const [users, conversations, quotes, aiCalls, failedJobs] = await Promise.all([
-          tx.user.count({ where: { agencyId: a.id } }), tx.conversation.count({ where: { agencyId: a.id } }), tx.quote.count({ where: { agencyId: a.id } }),
+          tx.user.count({ where: { agencyId: a.id } }), tx.conversation.count({ where: { agencyId: a.id } }), tx.quote.count({ where: { agencyId: a.id, deletedAt: null } }),
           tx.aiUsage.count({ where: { agencyId: a.id, createdAt: { gte: monthStart } } }), tx.job.count({ where: { agencyId: a.id, status: 'failed' } }),
         ]);
         return { id: a.id, name: a.name, slug: a.slug, status: a.status, plan: a.plan, aiEnabled: a.aiEnabled, aiMonthlyLimit: a.aiMonthlyLimit, createdAt: a.createdAt, usage: { users, conversations, quotes, aiCalls, failedJobs } };
