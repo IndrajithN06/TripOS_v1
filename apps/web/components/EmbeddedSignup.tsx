@@ -1,7 +1,7 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
 import { api, ApiError, useApi } from '@/lib/api';
-import { createSignupTracker, explainSignupError, parseSignupMessage } from '@/lib/embedded-signup';
+import { createSignupTracker, explainSignupError, parseSignupMessage, signupLaunchOptions } from '@/lib/embedded-signup';
 import { Field } from '@/components/ui';
 
 declare global {
@@ -88,7 +88,7 @@ export function EmbeddedSignup({ existingLive, onDone }: { existingLive: boolean
         // The one-time code lives about 30 seconds: if Meta never reports the finished accounts, stop instead of hanging.
         timer = setTimeout(() => { if (!tracker.settled) { stop(); setPhase('idle'); setMessage({ text: 'Meta did not report the connected account in time. Nothing was connected. Try again.', err: true }); } }, 20000);
       } else tracker.loginClosedWithoutCode();
-    }, { config_id: started.configId, response_type: 'code', override_default_response_type: true, extras: { setup: {} } });
+    }, signupLaunchOptions(started.configId));
   }
 
   return (

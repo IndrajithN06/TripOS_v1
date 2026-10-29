@@ -70,3 +70,18 @@ export function explainSignupError(code: string | undefined, fallback: string): 
     default: return fallback;
   }
 }
+
+/**
+ * The options passed to FB.login for Embedded Signup v4 with WhatsApp Business app onboarding (Coexistence).
+ * Meta: "Customize Embedded Signup" on the Business-app onboarding page. Without `featureType` the standard Cloud API flow runs,
+ * which asks for a number that is not already on the WhatsApp Business app. `sessionInfoVersion: '3'` selects the session-event format
+ * (the completion event for a Business-app number is FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING). `setup: {}` is required by v4.
+ */
+export function signupLaunchOptions(configId: string) {
+  return {
+    config_id: configId,
+    response_type: 'code' as const,
+    override_default_response_type: true,
+    extras: { setup: {}, featureType: 'whatsapp_business_app_onboarding', sessionInfoVersion: '3' },
+  };
+}

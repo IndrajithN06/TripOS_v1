@@ -8,7 +8,7 @@ Manual connection (paste WABA ID, phone number ID, token) is unchanged and remai
 ## What it does
 1. Admin opens Settings → WhatsApp → **Connect with Facebook** (only shown when the flag is on).
 2. `POST /agency/whatsapp/embedded/start` creates a resumable attempt and returns a one-time `state` value (stored only as a hash).
-3. The browser loads Meta's JS SDK and runs `FB.login` with the configuration id (`response_type: 'code'`, `override_default_response_type: true`, `extras: { setup: {} }`).
+3. The browser loads Meta's JS SDK and runs `FB.login` with the configuration id and the options from `signupLaunchOptions()` in `apps/web/lib/embedded-signup.ts` (`response_type: 'code'`, `override_default_response_type: true`, `extras: { setup: {}, featureType: 'whatsapp_business_app_onboarding', sessionInfoVersion: '3' }`). `featureType` selects the WhatsApp Business app (coexistence) flow, and `sessionInfoVersion: '3'` selects the session-event format whose completion event is `FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING`. These options follow Meta's documentation but have not yet been verified against the real service.
 4. The popup reports the connected account (`WA_EMBEDDED_SIGNUP` message event: `FINISH` or `FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING`) and, via the `FB.login` callback, a one-time code.
 5. `POST /agency/whatsapp/embedded/complete` (server side, agency taken from the session):
    1. checks attempt ownership, the `state` value and expiry; takes an atomic run lock;
