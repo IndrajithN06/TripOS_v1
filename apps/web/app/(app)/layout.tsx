@@ -8,6 +8,7 @@ import { Loading, Me, MeContext, RefreshMeContext, ErrorBox } from '@/components
 const NAV = [
   { href: '/dashboard', label: 'Dashboard', icon: '▦', roles: ['AGENCY_ADMIN', 'SALES'] },
   { href: '/inbox', label: 'WhatsApp Inbox', icon: '✉', roles: ['AGENCY_ADMIN', 'SALES'] },
+  { href: '/customers', label: 'Customers', icon: '☺', roles: ['AGENCY_ADMIN', 'SALES'] },
   { href: '/quotes', label: 'Quotes', icon: '₹', roles: ['AGENCY_ADMIN', 'SALES'] },
   { href: '/vehicles', label: 'Vehicle Types', icon: '🚐', roles: ['AGENCY_ADMIN', 'SALES'] },
   { href: '/settings', label: 'Settings', icon: '⚙', roles: ['AGENCY_ADMIN'] },

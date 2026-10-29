@@ -53,9 +53,9 @@ export const PERMISSIONS: Record<RoleName, string[]> = {
   SUPER_ADMIN: ['platform.agencies.manage', 'platform.usage.view'],
   AGENCY_ADMIN: [
     'dashboard.full', 'users.manage', 'branding.manage', 'vehicles.manage', 'vehicles.read', 'whatsapp.manage', 'templates.manage',
-    'inbox.use', 'quotes.use', 'quotes.view_all', 'settings.manage', 'ai.use', 'ai.usage.view',
+    'inbox.use', 'customers.use', 'quotes.use', 'quotes.view_all', 'settings.manage', 'ai.use', 'ai.usage.view',
   ],
-  SALES: ['dashboard.limited', 'vehicles.read', 'inbox.use', 'quotes.use', 'ai.use'],
+  SALES: ['dashboard.limited', 'vehicles.read', 'inbox.use', 'customers.use', 'quotes.use', 'ai.use'],
 };
 
 @Injectable()
