@@ -9,7 +9,7 @@ Base URL (local): `http://localhost:4100`. The web app calls the API through its
 - **Roles:** `SA` Super Admin, `AA` Agency Admin, `S` Sales. "Any agency" = AA or S.
 - **Money:** decimal strings with two decimals (`"20400.00"`). Inputs accept strings or numbers with at most 2 decimals.
 - **Times:** ISO-8601 UTC in and out; the UI renders them in the agency timezone.
-- **Errors:** `{ "error": { "code", "message", "issues?" } }`. Common codes: `validation_error` (400), `unauthenticated` (401), `forbidden` / `csrf` (403), `not_found` (404), `conflict` / `immutable` / `version_sent` (409), `pricing_error` (422), `ai_unavailable` (503). Production responses never include stack traces.
+- **Errors:** `{ "error": { "code", "message", "issues?" } }`. Common codes: `validation_error` (400), `unauthenticated` (401), `forbidden` / `csrf` (403), `not_found` (404), `conflict` / `immutable` / `version_sent` (409), `pricing_error` (422), `ai_bad_output` (502), `ai_unavailable` (503). Production responses never include stack traces.
 - **Rate limits:** login and accept-invite are limited to 10 per minute per client; general limit 600 per minute.
 - **Pagination:** list endpoints take `page` and `pageSize` (max 100).
 
@@ -111,7 +111,7 @@ Draft body (`POST /quotes`, `PATCH .../draft`, `POST /quotes/calculate`): `trip{
 | POST | `/inbox/conversations/:id/read` | clears unread |
 | POST | `/inbox/conversations/:id/notes` | internal, never sent |
 | PATCH | `/inbox/conversations/:id` | `assignedUserId` (must be an active user of this agency), `status` |
-| POST | `/inbox/conversations/:id/ai/:feature` | `summary`, `reply-suggestions`, `extract`, `quote-draft`, `negotiation`; drafts only; 503 when unavailable |
+| POST | `/inbox/conversations/:id/ai/:feature` | `summary`, `reply-suggestions`, `extract`, `quote-draft` (same contract as `extract`; no behaviour of its own yet), `negotiation`; drafts only. Each feature has its own instructions and JSON output contract (`modules/ai/ai-contracts.ts`), and the model's answer is validated before anything is shown or saved. Response shape is unchanged: `output` is `{summary, openQuestions}`, `{replies}`, `{fields, unknown, confidence}` or `{reply, suggestedDiscountPercent, note}`. In `fields`, a value the customer did not state is `null` (never `0` or a default) and `unknown` lists those fields. `days` is set only when the customer clearly states the number of days; a trip described only in nights, or only by dates, leaves `days` as `null`, because nights are never converted and days are never worked out from dates (the quote form derives days from the pickup and return times itself). `suggestedDiscountPercent` is a number from 0 to 100 or `null`; the model may write it as text such as `"10%"`, which is read as `10`, and anything malformed or outside 0-100 rejects the whole answer (it is a suggestion for staff to read and is never applied to a quote). Errors: `503 ai_unavailable` when the provider cannot be used (and `ai_kill_switch`, `ai_disabled`, `ai_limit_reached`); **`502 ai_bad_output`** when the provider answered but the answer was cut off, not valid JSON, or did not match the contract: nothing is shown or saved, the call is recorded in usage as `invalid_output` with its real token counts, and **counts toward the agency's monthly limit** exactly like a successful call, because it cost real tokens (calls that fail because the provider could not be reached are recorded as `error` with zero tokens and do not count) |
 
 ## Dashboard (any agency)
 | Method | Path | Notes |
