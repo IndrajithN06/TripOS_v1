@@ -56,7 +56,7 @@ A customer messages the agency's WhatsApp number. TripOS finds or creates the cu
 
 ### 5.2 Building a quote (in the chat)
 1. Open the conversation, click **New quote**.
-2. Fill trip details: type (outstation / local), pickup and return date-time (shown in agency time, IST by default), locations, passengers, days, estimated km, itinerary.
+2. Fill trip details: type (outstation / local), pickup and return date-time (shown in agency time, IST by default), locations, passengers, days, estimated km, itinerary. **For an outstation trip, enter the number of days (or a return date and time, which fills it in). TripOS never assumes a duration: without one the trip is not priced and cannot be saved or sent**, because days drive the minimum km and the driver batta. Local packages do not need it.
 3. Choose the vehicle; the rate card loads. Optionally override rates, add named extra charges (toll, parking, permit...) and a discount (amount or %), subject to your permission.
 4. Tick the vehicle photos relevant to this customer.
 5. Watch the **price summary** update. It is always calculated by the server; the page only displays it.
