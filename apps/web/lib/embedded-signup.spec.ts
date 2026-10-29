@@ -1,4 +1,4 @@
-import { createSignupTracker, explainSignupError, isTrustedFacebookOrigin, parseSignupMessage } from './embedded-signup';
+import { createSignupTracker, explainSignupError, isTrustedFacebookOrigin, parseSignupMessage, signupLaunchOptions } from './embedded-signup';
 
 describe('isTrustedFacebookOrigin', () => {
   it.each(['https://www.facebook.com', 'https://web.facebook.com', 'https://business.facebook.com', 'https://facebook.com'])('trusts %s', (o) => expect(isTrustedFacebookOrigin(o)).toBe(true));
@@ -64,5 +64,24 @@ describe('explainSignupError', () => {
     expect(explainSignupError('whatsapp_already_connected', 'x')).toMatch(/nothing was changed/i);
     expect(explainSignupError('not_coexistence', 'x')).toMatch(/not linked to the WhatsApp Business app/);
     expect(explainSignupError('unknown_code', 'server says so')).toBe('server says so');
+  });
+});
+
+describe('signupLaunchOptions (FB.login options)', () => {
+  it('asks Meta for WhatsApp Business app onboarding (Coexistence) with session info v3, keeping setup: {}', () => {
+    expect(signupLaunchOptions('CFG1')).toEqual({
+      config_id: 'CFG1',
+      response_type: 'code',
+      override_default_response_type: true,
+      extras: { setup: {}, featureType: 'whatsapp_business_app_onboarding', sessionInfoVersion: '3' },
+    });
+  });
+  it('uses exactly the configuration id it is given and never a hard-coded one', () => {
+    expect(signupLaunchOptions('A').config_id).toBe('A');
+    expect(signupLaunchOptions('B').config_id).toBe('B');
+  });
+  it('returns a fresh object each time, so a caller cannot mutate a shared one', () => {
+    const a = signupLaunchOptions('X'); a.extras.featureType = 'changed';
+    expect(signupLaunchOptions('X').extras.featureType).toBe('whatsapp_business_app_onboarding');
   });
 });
