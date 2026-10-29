@@ -78,6 +78,10 @@ Base URL (local): `http://localhost:4100`. The web app calls the API through its
 ## Quotes (any agency)
 | Method | Path | Notes |
 |---|---|---|
+| GET | `/customers` | `search` (name, email, phone digits), `page`, `pageSize`; each item has `conversations`, `quotes` (live quotes only) and `lastActivityAt`. Agency admin and sales; sales in "assigned" visibility see only customers linked to them (assigned chat, own quote, or created by them) |
+| GET | `/customers/:id` | customer, their WhatsApp conversations and non-deleted quotes (same visibility rules); a hidden or other-agency customer is `404` |
+| POST | `/customers` | manual create: `name`, `phone` (must include the country code; stored as `+digits`, the same form WhatsApp webhooks use, so a number is never duplicated; `409 customer_exists`), optional `email`, `notes` |
+| PATCH | `/customers/:id` | edit `name`, `email`, `notes` only (the phone is immutable); `null`/empty clears email and notes; audit records field names, never values |
 | POST | `/quotes/calculate` | pricing preview, nothing saved; client-supplied totals are ignored |
 | POST | `/quotes` | create draft v1 from `conversationId` or `customerId` |
 | GET | `/quotes` | `search`, `status`, `conversationId`, `page`, `pageSize` |

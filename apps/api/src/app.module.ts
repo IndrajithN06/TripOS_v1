@@ -10,6 +10,7 @@ import { AiService } from './modules/ai/ai.service';
 import { AgencyController } from './modules/agency/agency.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { AnalyticsController, AnalyticsService } from './modules/dashboard/analytics.module';
+import { CustomersController } from './modules/customers/customers.module';
 import { DashboardController, DashboardService } from './modules/dashboard/dashboard.module';
 import { DevController, MediaController } from './modules/dev/dev.module';
 import { HealthController } from './modules/health/health.controller';
@@ -62,7 +63,7 @@ class CoreModule {}
     DbModule, ProvidersModule, CoreModule, AuthModule,
   ],
   controllers: [
-    AgencyController, EmbeddedSignupController, TemplatesController, PlatformController, VehiclesController, QuotesController, PublicQuoteController, InboxController, WebhooksController, SignupWebhooksController,
+    AgencyController, EmbeddedSignupController, TemplatesController, PlatformController, VehiclesController, CustomersController, QuotesController, PublicQuoteController, InboxController, WebhooksController, SignupWebhooksController,
     DashboardController, AnalyticsController, HealthController, MediaController, DevController,
   ],
   providers: [
