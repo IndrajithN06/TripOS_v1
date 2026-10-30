@@ -7,8 +7,9 @@ import { WaAccount, WaSendError, WHATSAPP, WhatsAppProvider } from '../../provid
 import { isRetryableFailure } from '../quotes/retry-policy';
 import { compile, TemplateSpec } from '../templates/template-spec';
 import { WhatsappAccountService } from '../whatsapp/whatsapp-account.service';
+import { notConnectedMessage, SERVICE_WINDOW_MS, textSendBlock, windowState } from './service-window';
 
-export const SERVICE_WINDOW_MS = 24 * 3600 * 1000;
+export { SERVICE_WINDOW_MS, windowState };
 
 export type OutboundPayload =
   | { kind: 'text'; text: string }
@@ -53,7 +54,7 @@ export class OutboundService {
       if (!conv) throw new NotFoundException({ code: 'not_found', message: 'Conversation not found' });
       const customer = await tx.customer.findFirstOrThrow({ where: { id: conv.customerId, agencyId } });
       const account = await tx.whatsappAccount.findFirst({ where: { agencyId } });
-      if (!account || account.connectionStatus === 'disconnected') throw new BadRequestException({ code: 'whatsapp_not_connected', message: 'Connect a WhatsApp account in Settings first' });
+      if (!account || account.connectionStatus === 'disconnected') throw new BadRequestException({ code: 'whatsapp_not_connected', message: notConnectedMessage(account) });
 
       if (opts.idempotencyKey) {
         const prior = await tx.message.findFirst({ where: { agencyId, idempotencyKey: opts.idempotencyKey } });
@@ -81,8 +82,8 @@ export class OutboundService {
         template = t;
       } else {
         // Free-form messages are only allowed inside the 24h customer-service window.
-        const open = !!conv.lastInboundAt && Date.now() - conv.lastInboundAt.getTime() < SERVICE_WINDOW_MS;
-        if (!open) throw new BadRequestException({ code: 'window_closed', message: 'The 24-hour customer service window is closed. Send an approved template to re-open the conversation.' });
+        const block = textSendBlock(conv, account);
+        if (block) throw new BadRequestException({ code: block.code, message: block.message });
       }
 
       const text = payload.kind === 'text' ? payload.text : payload.kind === 'template' ? renderTemplate(template!.body, payload.variables) : payload.caption ?? null;

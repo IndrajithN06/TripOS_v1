@@ -7,7 +7,8 @@ import { AssetService } from '../../common/assets';
 import { Principal } from '../../common/auth';
 import { Db, Tx } from '../../db/db.service';
 import { randomToken } from '../../common/crypto';
-import { OutboundResult, OutboundService, SERVICE_WINDOW_MS } from '../inbox/outbound.service';
+import { OutboundResult, OutboundService } from '../inbox/outbound.service';
+import { windowState } from '../inbox/service-window';
 import { TemplatesService } from '../templates/templates.service';
 import { JobsService } from '../jobs/jobs.service';
 import { money, toSnapshot } from '../vehicles/vehicles.module';
@@ -436,7 +437,7 @@ export class QuotesService {
       const { quote, version } = await this.current(tx, p, agencyId, quoteId);
       const prev = versionNumber > 1 ? await tx.quoteVersion.findFirst({ where: { quoteId, agencyId, versionNumber: versionNumber - 1 } }) : null;
       const conv = quote.conversationId ? await tx.conversation.findFirst({ where: { id: quote.conversationId, agencyId } }) : null;
-      return { version, previousTotal: prev ? dec(prev.total) : null, windowOpen: !!conv?.lastInboundAt && Date.now() - conv.lastInboundAt.getTime() < SERVICE_WINDOW_MS };
+      return { version, previousTotal: prev ? dec(prev.total) : null, windowOpen: windowState(conv?.lastInboundAt).open };
     });
     const revised = versionNumber > 1;
     const list = await this.templates.approvedFor(agencyId, revised ? ['revised_quotation', 'quotation'] : ['quotation']);
@@ -470,7 +471,7 @@ export class QuotesService {
         await tx.quote.update({ where: { id: quote.id }, data: { conversationId: convId } });
       }
       const conv = await tx.conversation.findFirstOrThrow({ where: { id: convId, agencyId } });
-      const windowOpen = !!conv.lastInboundAt && Date.now() - conv.lastInboundAt.getTime() < SERVICE_WINDOW_MS;
+      const windowOpen = windowState(conv.lastInboundAt).open;
 
       const { assetId: pdfAssetId, model: m } = await this.ensurePdfAsset(tx, agencyId, p.userId, quoteId, versionNumber);
       if (!version.publicToken) await tx.quoteVersion.update({ where: { id: version.id }, data: { publicToken: randomToken(18) } });
