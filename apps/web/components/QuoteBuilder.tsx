@@ -6,6 +6,7 @@ import { Field, Modal, SimTag, StatusBadge, errMsg, useAction, useMe } from './u
 import { QuotePreview } from './QuotePreview';
 import { SendQuoteModal } from './SendQuoteModal';
 import { defaultPhotoSelection, sanitizeSelection, selectionSummary, toggleSelection } from '@/lib/photos';
+import { durationProblem, NEW_QUOTE_DAYS, storedDaysField } from '@/lib/quote-prefill';
 
 type Charge = { label: string; amount: string; taxable: boolean };
 interface Form {
@@ -21,13 +22,13 @@ const OVERRIDE_FIELDS: [string, string, string[]][] = [
 
 function blank(tz: string): Form {
   const start = new Date(Date.now() + 86400000); start.setMinutes(0, 0, 0);
-  return { tripType: 'outstation', pickupLocal: isoToZoned(start.toISOString(), tz), returnLocal: '', pickupLocation: '', destinations: '', itinerary: '', passengers: '4', days: '1', hours: '', km: '', minKmMode: 'trip', vehicleTypeId: '', overrides: {}, extraCharges: [], discountType: 'amount', discountValue: '', includeDriverBatta: true, inclusions: '', exclusions: '', notes: '', terms: '', imageAssetIds: [] };
+  return { tripType: 'outstation', pickupLocal: isoToZoned(start.toISOString(), tz), returnLocal: '', pickupLocation: '', destinations: '', itinerary: '', passengers: '4', days: NEW_QUOTE_DAYS, hours: '', km: '', minKmMode: 'trip', vehicleTypeId: '', overrides: {}, extraCharges: [], discountType: 'amount', discountValue: '', includeDriverBatta: true, inclusions: '', exclusions: '', notes: '', terms: '', imageAssetIds: [] };
 }
 function fromInput(i: any, tz: string): Form {
   const t = i.trip;
   return {
     tripType: t.tripType, pickupLocal: isoToZoned(t.pickupAt, tz), returnLocal: isoToZoned(t.returnAt, tz), pickupLocation: t.pickupLocation, destinations: (t.destinations ?? []).join(', '), itinerary: t.itinerary ?? '',
-    passengers: String(t.passengers), days: String(t.days ?? 1), hours: t.hours?.toString() ?? '', km: t.km?.toString() ?? '', minKmMode: t.minKmMode ?? 'trip', vehicleTypeId: i.vehicleTypeId,
+    passengers: String(t.passengers), days: storedDaysField(t.days), hours: t.hours?.toString() ?? '', km: t.km?.toString() ?? '', minKmMode: t.minKmMode ?? 'trip', vehicleTypeId: i.vehicleTypeId,
     overrides: Object.fromEntries(Object.entries(i.overrides ?? {}).map(([k, v]) => [k, String(v)])), extraCharges: (i.extraCharges ?? []).map((c: any) => ({ label: c.label, amount: String(c.amount), taxable: c.taxable })),
     discountType: i.discount?.type ?? 'amount', discountValue: i.discount?.value ?? '', includeDriverBatta: i.includeDriverBatta !== false, inclusions: i.inclusions ?? '', exclusions: i.exclusions ?? '', notes: i.notes ?? '', terms: i.terms ?? '', imageAssetIds: i.imageAssetIds ?? [],
   };
@@ -50,6 +51,9 @@ export function QuoteBuilder({ conversationId, customerId, quoteId, prefill, onC
   const [followUp, setFollowUp] = useState('');
   const [sendModal, setSendModal] = useState<{ quoteId: string; versionNumber: number } | null>(null);
   const set = <K extends keyof Form>(k: K, v: Form[K]) => setForm((f) => ({ ...f, [k]: v }));
+  // An outstation trip is priced by its days (minimum km per day x days, driver batta per day), so one without a valid duration is
+  // never priced, saved, previewed or sent. Local packages are unaffected. A trip duration the customer did not state arrives empty.
+  const durationIssue = durationProblem(form.tripType, form.days);
 
   const load = useCallback(async (id: string) => {
     const q = await api(`/quotes/${id}`);
@@ -86,14 +90,17 @@ export function QuoteBuilder({ conversationId, customerId, quoteId, prefill, onC
   const timer = useRef<ReturnType<typeof setTimeout>>(undefined);
   useEffect(() => {
     clearTimeout(timer.current);
+    if (durationIssue) { setCalc(null); setCalcErr(''); return; } // no price (and no server call) until the duration is valid
     if (!form.vehicleTypeId || !payload.trip.pickupAt || !payload.trip.pickupLocation || !payload.trip.passengers) { setCalc(null); return; }
     timer.current = setTimeout(async () => {
       try { setCalc(await api('/quotes/calculate', { body: payload })); setCalcErr(''); } catch (e) { setCalc(null); setCalcErr(errMsg(e)); }
     }, 350);
     return () => clearTimeout(timer.current);
-  }, [payload, form.vehicleTypeId]);
+  }, [payload, form.vehicleTypeId, durationIssue]);
 
   async function save(): Promise<any | undefined> {
+    // Defence in depth: the buttons are disabled while the duration is invalid, but no code path may save an incomplete outstation quote.
+    if (durationIssue) return run(async () => { throw new Error(durationIssue); });
     return run(async () => {
       let q;
       if (!quote) q = await api('/quotes', { body: { ...payload, conversationId, customerId } });
@@ -176,11 +183,12 @@ export function QuoteBuilder({ conversationId, customerId, quoteId, prefill, onC
               <Field label="Destination(s), comma separated"><input value={form.destinations} onChange={(e) => set('destinations', e.target.value)} placeholder="Coorg, Mysore" /></Field>
             </div>
             <div className="fields">
-              {!isLocal && <Field label="Days"><input type="number" min={1} value={form.days} onChange={(e) => set('days', e.target.value)} /></Field>}
+              {!isLocal && <Field label="Days"><input type="number" min={1} value={form.days} aria-invalid={!!durationIssue} onChange={(e) => set('days', e.target.value)} /></Field>}
               {isLocal && <Field label="Actual / estimated hours"><input type="number" min={0} step="0.5" value={form.hours} onChange={(e) => set('hours', e.target.value)} /></Field>}
               <Field label={isLocal ? 'Estimated km' : 'Estimated total km'}><input type="number" min={0} value={form.km} onChange={(e) => set('km', e.target.value)} /></Field>
               {!isLocal && <Field label="Minimum km rule"><select value={form.minKmMode} onChange={(e) => set('minKmMode', e.target.value as 'trip' | 'daily')}><option value="trip">Trip-wide (days × min km)</option><option value="daily" disabled>Daily (needs per-day km)</option></select></Field>}
             </div>
+            {durationIssue && <div className="banner warn small" role="alert" data-testid="duration-required">{durationIssue}</div>}
             <Field label="Itinerary"><textarea value={form.itinerary} onChange={(e) => set('itinerary', e.target.value)} placeholder="Day 1: …" /></Field>
           </section>
 
@@ -265,7 +273,7 @@ export function QuoteBuilder({ conversationId, customerId, quoteId, prefill, onC
           <section className="card stack qb-summary" aria-live="polite" ref={summary}>
             <h2>Price summary</h2>
             {calcErr && <div className="banner err">{calcErr}</div>}
-            {!calc && !calcErr && <div className="muted small">Fill in the trip and vehicle to see the price.</div>}
+            {!calc && !calcErr && <div className="muted small">{durationIssue ? 'Enter the trip duration (days) to see the price.' : 'Fill in the trip and vehicle to see the price.'}</div>}
             {calc && (
               <table className="lines"><tbody>
                 {calc.lines.map((l: any, i: number) => <tr key={i}><td>{l.label}</td><td className="right mono">{inr(l.amount)}</td></tr>)}
@@ -276,7 +284,7 @@ export function QuoteBuilder({ conversationId, customerId, quoteId, prefill, onC
             )}
             <div className="small muted">Calculated by the server. The final total is re-validated when you save or send.</div>
             <Field label="Follow-up reminder (optional)"><input type="datetime-local" value={followUp} onChange={(e) => setFollowUp(e.target.value)} /></Field>
-            <button className="btn" disabled={busy || !form.vehicleTypeId} onClick={doPreview}>Save & preview</button>
+            <button className="btn" disabled={busy || !form.vehicleTypeId || !!durationIssue} onClick={doPreview}>Save & preview</button>
             {noPhotoPrompt && photos.needsWarning && (
               <div className="banner warn small stack" role="alertdialog" aria-label="Send without photos?" data-testid="no-photo-prompt">
                 <div><strong>Send without photos?</strong> This vehicle has {photos.total} photo{photos.total === 1 ? '' : 's'}, but none are selected.</div>
@@ -286,9 +294,9 @@ export function QuoteBuilder({ conversationId, customerId, quoteId, prefill, onC
                 </div>
               </div>
             )}
-            <button className="btn primary" disabled={busy || !calc} onClick={() => void openTemplateSend()}>{locked ? `Save v${current.versionNumber + 1} & send quotation on WhatsApp` : 'Send Quotation on WhatsApp'}</button>
-            <button className="btn" disabled={busy || !calc} title="Plain text, PDF and photos. WhatsApp allows this only within 24 hours of the customer's last message." onClick={() => void doSend()}>{locked ? `Save v${current.versionNumber + 1} & send as plain messages` : 'Send as plain messages (24h window)'}</button>
-            <button className="btn" disabled={busy || !form.vehicleTypeId} onClick={() => save()}>{locked ? 'Create new version (draft)' : 'Save draft'}</button>
+            <button className="btn primary" disabled={busy || !calc || !!durationIssue} onClick={() => void openTemplateSend()}>{locked ? `Save v${current.versionNumber + 1} & send quotation on WhatsApp` : 'Send Quotation on WhatsApp'}</button>
+            <button className="btn" disabled={busy || !calc || !!durationIssue} title="Plain text, PDF and photos. WhatsApp allows this only within 24 hours of the customer's last message." onClick={() => void doSend()}>{locked ? `Save v${current.versionNumber + 1} & send as plain messages` : 'Send as plain messages (24h window)'}</button>
+            <button className="btn" disabled={busy || !form.vehicleTypeId || !!durationIssue} onClick={() => save()}>{locked ? 'Create new version (draft)' : 'Save draft'}</button>
             {me.environment.whatsappSimulated && <div className="small"><SimTag /> Sends go to the local simulator only.</div>}
           </section>
 

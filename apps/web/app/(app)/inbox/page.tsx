@@ -5,10 +5,13 @@ import { fmtRelative, fmtTime, inr } from '@/lib/format';
 import { Empty, ErrorBox, Loading, SimTag, StatusBadge, errMsg, useAction, useMe } from '@/components/ui';
 import { QuoteBuilder } from '@/components/QuoteBuilder';
 import { InboxTemplateModal } from '@/components/InboxTemplateModal';
+import { StarterPicker } from '@/components/StarterPicker';
+import { composerState } from '@/lib/starter-send';
 import { MessageTicks } from '@/components/MessageTicks';
 import { ConfirmDeleteQuote, DeletableQuote } from '@/components/ConfirmDeleteQuote';
 import { canDeleteQuote } from '@/lib/quote-delete';
 import { dayLabel, initials } from '@/lib/inbox-view';
+import { extractToPrefill } from '@/lib/quote-prefill';
 
 const POLL_MS = 4000; // V1 uses short polling instead of SSE/WebSockets (see docs/DECISIONS_AND_ASSUMPTIONS.md)
 
@@ -61,7 +64,7 @@ function Conversation({ id, tick, onChanged, onBack, detailsOpen, onToggleDetail
   const users = useApi<any[]>(me.user.role === 'AGENCY_ADMIN' ? '/agency/users' : null);
   const [text, setText] = useState(''), [builder, setBuilder] = useState<{ quoteId?: string; prefill?: any } | null>(null), [sending, setSending] = useState(false);
   const [note, setNote] = useState(''), [ai, setAi] = useState<any>(null), [aiBusy, setAiBusy] = useState(false), [aiErr, setAiErr] = useState('');
-  const [tplModal, setTplModal] = useState(false), [delQuote, setDelQuote] = useState<DeletableQuote | null>(null);
+  const [tplModal, setTplModal] = useState(false), [starterOpen, setStarterOpen] = useState(false), [delQuote, setDelQuote] = useState<DeletableQuote | null>(null);
   const bottom = useRef<HTMLDivElement>(null), lastCount = useRef(0);
 
   useEffect(() => { void api(`/inbox/conversations/${id}/read`, { method: 'POST' }).then(onChanged).catch(() => undefined); }, [id]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -85,11 +88,8 @@ function Conversation({ id, tick, onChanged, onBack, detailsOpen, onToggleDetail
     catch (e) { setAi(null); setAiErr(errMsg(e)); }
     setAiBusy(false);
   }
-  const extractToPrefill = (o: any) => {
-    const f = o.fields;
-    return { pickupLocation: f.pickupLocation ?? '', destinations: f.destination ?? '', passengers: f.passengers ? String(f.passengers) : '4', days: f.days ? String(f.days) : '1', tripType: f.tripType === 'local' ? 'local_8h_80km' : 'outstation' };
-  };
 
+  const composer = composerState({ sendBlock: d?.sendBlock, text, sending });
   if (detail.error) return <section className="inbox-chat"><ErrorBox e={detail.error} retry={detail.reload} /></section>;
   if (!d) return <section className="inbox-chat"><Loading /></section>;
 
@@ -139,16 +139,19 @@ function Conversation({ id, tick, onChanged, onBack, detailsOpen, onToggleDetail
           <div ref={bottom} />
         </div>
         <div className="composer">
+          {composer.notice && <div className={`banner ${d.sendBlock ? 'warn' : 'info'} small row between`} role="status" data-testid="composer-notice"><span>{composer.notice}</span>{composer.suggestMetaTemplate && <button className="btn sm" onClick={() => setTplModal(true)}>Use an approved template</button>}</div>}
           {ai?.output?.replies && <div className="chips" aria-label="Suggested replies (drafts)">{ai.output.replies.map((r: string, i: number) => <button key={i} className="chip" onClick={() => setText(r)} title="Click to edit before sending">💡 {r.slice(0, 70)}…</button>)}</div>}
           {ai?.output?.reply && <div className="chips"><button className="chip" onClick={() => setText(ai.output.reply)}>💡 Use suggested reply</button></div>}
-          <textarea aria-label="Message" rows={2} placeholder={d.windowOpen ? 'Type a message…' : 'Window closed: use Templates to send an approved template'} disabled={!d.windowOpen} value={text} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) void sendText(); }} />
+          <textarea aria-label="Message" rows={2} placeholder={composer.canType ? 'Type a message…' : 'Sending is not available right now — see the note above'} disabled={!composer.canType} value={text} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && composer.canSend) void sendText(); }} />
           <div className="composer-actions">
             <div className="row">
               <button className="btn sm" onClick={() => setTplModal(true)}>📋 Templates</button>
+              <button className="btn sm" onClick={() => setStarterOpen(true)} title="Ready-made wording you fill in and edit (not WhatsApp templates)">✨ Starters</button>
               <button className="btn sm" onClick={() => runAi('reply-suggestions')} disabled={aiBusy}>💡 Suggest replies</button>
             </div>
-            <button className="btn primary" disabled={sending || !text.trim() || !d.windowOpen} onClick={sendText}>{sending ? 'Sending…' : 'Send'}</button>
+            <button className="btn primary" disabled={!composer.canSend} onClick={sendText}>{sending ? 'Sending…' : 'Send'}</button>
           </div>
+          {d.chargesNotice && <div className="small muted" data-testid="charges-notice">{d.chargesNotice}</div>}
         </div>
       </section>
 
@@ -203,6 +206,7 @@ function Conversation({ id, tick, onChanged, onBack, detailsOpen, onToggleDetail
       </section>
 
       {delQuote && <ConfirmDeleteQuote quote={delQuote} onClose={() => setDelQuote(null)} onDeleted={() => { setDelQuote(null); reload(); }} />}
+      {starterOpen && <StarterPicker conversationId={id} onInsert={setText} onUseApprovedTemplate={() => setTplModal(true)} onClose={() => setStarterOpen(false)} />}
       {tplModal && <InboxTemplateModal conversationId={id} quotes={d.quotes} windowOpen={d.windowOpen} onClose={() => setTplModal(false)} onSent={reload} />}
       {builder && <QuoteBuilder conversationId={id} quoteId={builder.quoteId} prefill={builder.prefill} onClose={() => { setBuilder(null); reload(); }} onChanged={reload} />}
     </>

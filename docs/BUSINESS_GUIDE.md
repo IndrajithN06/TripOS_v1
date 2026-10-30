@@ -56,7 +56,7 @@ A customer messages the agency's WhatsApp number. TripOS finds or creates the cu
 
 ### 5.2 Building a quote (in the chat)
 1. Open the conversation, click **New quote**.
-2. Fill trip details: type (outstation / local), pickup and return date-time (shown in agency time, IST by default), locations, passengers, days, estimated km, itinerary.
+2. Fill trip details: type (outstation / local), pickup and return date-time (shown in agency time, IST by default), locations, passengers, days, estimated km, itinerary. **For an outstation trip, enter the number of days (or a return date and time, which fills it in). TripOS never assumes a duration: without one the trip is not priced and cannot be saved or sent**, because days drive the minimum km and the driver batta. Local packages do not need it.
 3. Choose the vehicle; the rate card loads. Optionally override rates, add named extra charges (toll, parking, permit...) and a discount (amount or %), subject to your permission.
 4. Tick the vehicle photos relevant to this customer.
 5. Watch the **price summary** update. It is always calculated by the server; the page only displays it.
@@ -89,7 +89,8 @@ billable km = max(750, 3 x 300) = 900 → 900 x 20 = 18,000 + batta 3 x 800 = 2,
 **Discount and tax:** a ₹500 discount on ₹3,500 with 5% exclusive tax: taxable base 3,000, tax 150, total **₹3,150**. Lines marked "not taxable" (for example toll) stay out of the tax base. In *inclusive* mode the tax is contained in the price and the total does not change.
 
 ## 7. WhatsApp rules (set by Meta, enforced by TripOS)
-- **24-hour window:** free-form messages are allowed only within 24 hours of the customer's last message. Outside it, only an **approved template** can be sent. The chat shows whether the window is open.
+- **24-hour window:** free-form messages are allowed only within 24 hours of the customer's last message. Outside it, only an **approved template** can be sent. The chat shows whether the window is open. When the window is closed, or the WhatsApp number is disconnected, the message box is switched off and says why; TripOS never sends plain text as a workaround.
+- **Message starters:** five ready-made wordings (Quotation Ready, Quote Follow-up, Booking Confirmation, Payment Reminder, Upcoming Trip Reminder) are in the chat under **Starters**. TripOS fills in what it knows (customer, your agency, the latest quotation for this chat); you type the rest (booking reference, departure date, amount due), edit the text if you like, and send it as a normal message. Starters are ordinary messages, **not** WhatsApp-approved templates, so they work only while the window is open.
 - **Templates** have a status reported by the provider: local draft → submitted → pending → approved / rejected / paused. TripOS never treats a template as approved until the provider says so, and checks variables before sending.
 - Each agency uses its **own** WhatsApp Business number.
 - **Meta charges per message** (since 1 October 2026 this includes in-window replies, after 1,000 free service messages per number per month, plus GST in India). A quote sent as text + PDF + photos is several messages. See `COSTS_AND_PRICING.md`.

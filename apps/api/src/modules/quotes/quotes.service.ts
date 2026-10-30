@@ -7,12 +7,14 @@ import { AssetService } from '../../common/assets';
 import { Principal } from '../../common/auth';
 import { Db, Tx } from '../../db/db.service';
 import { randomToken } from '../../common/crypto';
-import { OutboundResult, OutboundService, SERVICE_WINDOW_MS } from '../inbox/outbound.service';
+import { OutboundResult, OutboundService } from '../inbox/outbound.service';
+import { windowState } from '../inbox/service-window';
 import { TemplatesService } from '../templates/templates.service';
 import { JobsService } from '../jobs/jobs.service';
 import { money, toSnapshot } from '../vehicles/vehicles.module';
 import { quoteMessageText, renderQuotePdf, RenderModel } from './quote-render';
 import { autoRetryDelayMs, SendOutcome, withinAutoRetryBudget } from './retry-policy';
+import { outstationDays } from './trip-duration';
 
 /** Error code thrown when work is attempted on a soft-deleted quote (a queued retry treats it as "nothing to do"). */
 export const QUOTE_DELETED = 'quote_deleted';
@@ -62,6 +64,9 @@ export class QuotesService {
 
   /** Builds everything a version stores. Authoritative: clients never supply totals. */
   private async build(tx: Tx, agencyId: string, p: Principal, input: DraftInput, prev?: { vehicleTypeId: string; rateSnapshot: any }) {
+    // An outstation trip needs a real duration (days, or a return date to derive it from) before anything is priced or saved.
+    // Checked first, before any database work; local packages are priced by hours and km and are never blocked by this.
+    const tripDays = input.trip.tripType === 'outstation' ? outstationDays(input.trip) : input.trip.days;
     const agency = await tx.agency.findUniqueOrThrow({ where: { id: agencyId } });
     const vt = await tx.vehicleType.findFirst({ where: { id: input.vehicleTypeId, agencyId } });
     if (!vt) throw new NotFoundException({ code: 'vehicle_not_found', message: 'Vehicle type not found' });
@@ -83,7 +88,7 @@ export class QuotesService {
     const tax = { enabled: agency.taxEnabled, ratePercent: dec(agency.taxRatePercent), mode: agency.taxMode as 'exclusive' | 'inclusive' };
     const t = input.trip;
     const pricingInput: PricingInput = {
-      tripType: t.tripType, rate: rateSnapshot, overrides: input.overrides, hours: t.hours, km: t.km, days: t.days ?? daysBetween(t.pickupAt, t.returnAt),
+      tripType: t.tripType, rate: rateSnapshot, overrides: input.overrides, hours: t.hours, km: t.km, days: tripDays,
       minKmMode: t.minKmMode, dailyKm: t.dailyKm, includeDriverBatta: input.includeDriverBatta, extraCharges: input.extraCharges,
       discount: input.discount ?? undefined, tax,
     };
@@ -432,7 +437,7 @@ export class QuotesService {
       const { quote, version } = await this.current(tx, p, agencyId, quoteId);
       const prev = versionNumber > 1 ? await tx.quoteVersion.findFirst({ where: { quoteId, agencyId, versionNumber: versionNumber - 1 } }) : null;
       const conv = quote.conversationId ? await tx.conversation.findFirst({ where: { id: quote.conversationId, agencyId } }) : null;
-      return { version, previousTotal: prev ? dec(prev.total) : null, windowOpen: !!conv?.lastInboundAt && Date.now() - conv.lastInboundAt.getTime() < SERVICE_WINDOW_MS };
+      return { version, previousTotal: prev ? dec(prev.total) : null, windowOpen: windowState(conv?.lastInboundAt).open };
     });
     const revised = versionNumber > 1;
     const list = await this.templates.approvedFor(agencyId, revised ? ['revised_quotation', 'quotation'] : ['quotation']);
@@ -466,7 +471,7 @@ export class QuotesService {
         await tx.quote.update({ where: { id: quote.id }, data: { conversationId: convId } });
       }
       const conv = await tx.conversation.findFirstOrThrow({ where: { id: convId, agencyId } });
-      const windowOpen = !!conv.lastInboundAt && Date.now() - conv.lastInboundAt.getTime() < SERVICE_WINDOW_MS;
+      const windowOpen = windowState(conv.lastInboundAt).open;
 
       const { assetId: pdfAssetId, model: m } = await this.ensurePdfAsset(tx, agencyId, p.userId, quoteId, versionNumber);
       if (!version.publicToken) await tx.quoteVersion.update({ where: { id: version.id }, data: { publicToken: randomToken(18) } });
@@ -659,11 +664,6 @@ export class QuotesService {
 }
 
 const effectiveStatus = (q: { status: string; expiryAt: Date | null }) => (['sent', 'negotiating'].includes(q.status) && q.expiryAt && q.expiryAt < new Date() ? 'expired' : q.status);
-
-function daysBetween(a: string, b?: string | null) {
-  if (!b) return 1;
-  return Math.max(1, Math.ceil((new Date(b).getTime() - new Date(a).getTime()) / 86400000));
-}
 
 function mergeInput(prev: DraftInput, patch: z.infer<typeof patchSchema>): DraftInput {
   const m: any = { ...prev, ...patch };
