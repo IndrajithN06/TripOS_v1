@@ -106,14 +106,20 @@ Draft body (`POST /quotes`, `PATCH .../draft`, `POST /quotes/calculate`): `trip{
 | Method | Path | Notes |
 |---|---|---|
 | GET | `/inbox/conversations` | `search`, `filter` (all, unread, mine, unassigned, open, closed, quoted) |
-| GET | `/inbox/conversations/:id` | customer, assignee, notes, quotes, 24h-window state, AI summary |
+| GET | `/inbox/conversations/:id` | customer, assignee, notes, quotes, 24h-window state (`windowOpen`, `windowExpiresAt`), `sendBlock` (`null`, or `{code, message}` explaining why a free-form text cannot be sent now: `window_closed` or `whatsapp_not_connected`), `chargesNotice`, AI summary |
 | GET | `/inbox/conversations/:id/messages` | `limit`, `before` |
 | POST | `/inbox/conversations/:id/messages` | `{type:'text',text}` or `{type:'template',templateId,variables[]}`, optional `idempotencyKey` |
+| GET | `/inbox/conversations/:id/starter-templates` | The five built-in TripOS message starters (Quotation Ready, Quote Follow-up, Booking Confirmation, Payment Reminder, Upcoming Trip Reminder) with their fields, plus `windowOpen`, `sendBlock` and a neutral `notice`. Read-only; same visibility rule as the conversation |
+| POST | `/inbox/conversations/:id/starter-templates/:key/render` | `{values?}` (the agent's own entries). Returns the filled `text`, `missing[]` fields and per-field `auto` flags. Sends and stores nothing; the agent edits the text and sends it through the text path above |
 | POST | `/inbox/conversations/:id/messages/:messageId/retry` | failed text only |
 | POST | `/inbox/conversations/:id/read` | clears unread |
 | POST | `/inbox/conversations/:id/notes` | internal, never sent |
 | PATCH | `/inbox/conversations/:id` | `assignedUserId` (must be an active user of this agency), `status` |
 | POST | `/inbox/conversations/:id/ai/:feature` | `summary`, `reply-suggestions`, `extract`, `quote-draft`, `negotiation`; drafts only; 503 when unavailable |
+
+**Free-form text and the service window.** A free-form text is accepted only while the conversation's last *inbound* message is less than 24 hours old (exactly 24 hours is closed; our own messages never extend it). Otherwise the API returns `400 window_closed`, and a disconnected number returns `400 whatsapp_not_connected` (checked first, with the stored reason). Outside the window only an approved Meta template can be sent; a template that is not `approved` returns `400 template_not_approved`, and nothing is ever sent as a text instead. The check is made on the server on every send, and `sendBlock` on the conversation only mirrors it for the UI.
+
+**Built-in starters are not Meta templates.** They are shared wording defined in code (`inbox/starter-messages.ts`), identical for every agency, never submitted to Meta and never treated as approved. Booking reference, departure date and amount due are always entered by the agent (V1 holds no booking or payment data); customer, agency and the conversation's latest quotation fill the rest. A value that cannot be filled is listed in `missing` and left as `{{name}}`, never guessed. Meta may charge for messages sent; TripOS neither bills nor estimates it.
 
 ## Dashboard (any agency)
 | Method | Path | Notes |

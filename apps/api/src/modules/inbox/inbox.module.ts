@@ -5,7 +5,18 @@ import { AssetService } from '../../common/assets';
 import { agencyOf, CurrentUser, parse, Principal, Roles } from '../../common/auth';
 import { Db, Tx } from '../../db/db.service';
 import { AiService } from '../ai/ai.service';
-import { OutboundService, SERVICE_WINDOW_MS } from './outbound.service';
+import { OutboundService } from './outbound.service';
+import { outstationDays } from '../quotes/trip-duration';
+import { textSendBlock, windowState } from './service-window';
+import { AUTO_FIELDS, cleanValue, getStarter, placeholdersOf, renderStarter, STARTER_FIELDS, STARTERS } from './starter-messages';
+
+/** Shown next to the starters. Deliberately neutral: Meta decides what is charged and at what rate. */
+export const MESSAGING_CHARGES_NOTICE = 'WhatsApp (Meta) may charge for messages sent, depending on the message type and your Meta account.';
+
+const durationOf = (trip: any): string | undefined => {
+  if (trip?.tripType !== 'outstation') return undefined;
+  try { const n = outstationDays(trip); return `${n} day${n === 1 ? '' : 's'}`; } catch { return undefined; }
+};
 import { QuotesService } from '../quotes/quotes.service';
 import { TemplatesService } from '../templates/templates.service';
 
@@ -72,10 +83,14 @@ export class InboxService {
         c.assignedUserId ? tx.user.findFirst({ where: { id: c.assignedUserId }, select: { id: true, name: true } }) : null,
       ]);
       const authors = await tx.user.findMany({ where: { id: { in: notes.map((n) => n.authorId) } }, select: { id: true, name: true } });
-      const windowOpen = !!c.lastInboundAt && Date.now() - c.lastInboundAt.getTime() < SERVICE_WINDOW_MS;
+      const win = windowState(c.lastInboundAt);
+      const account = await tx.whatsappAccount.findFirst({ where: { agencyId } });
+      const block = textSendBlock(c, account);
       return {
-        id: c.id, status: c.status, unreadCount: c.unreadCount, summary: c.summary, summaryAt: c.summaryAt, windowOpen,
-        windowExpiresAt: c.lastInboundAt ? new Date(c.lastInboundAt.getTime() + SERVICE_WINDOW_MS) : null,
+        id: c.id, status: c.status, unreadCount: c.unreadCount, summary: c.summary, summaryAt: c.summaryAt, windowOpen: win.open,
+        windowExpiresAt: win.expiresAt,
+        /** Why a free-form text cannot be sent now (null = it can). The server enforces the same rule on every send. */
+        sendBlock: block, chargesNotice: MESSAGING_CHARGES_NOTICE,
         customer: { id: customer.id, name: customer.name, phone: customer.phoneE164, email: customer.email, notes: customer.notes }, assignedUser: assignee,
         notes: notes.map((n) => ({ id: n.id, text: n.text, createdAt: n.createdAt, author: authors.find((a) => a.id === n.authorId)?.name ?? 'Unknown' })), quotes,
       };
@@ -133,6 +148,46 @@ export class InboxController {
     return this.svc.messages(p, agencyOf(p), id, parse(z.object({ before: z.string().datetime().optional(), limit: z.coerce.number().int().min(1).max(100).default(50) }), q));
   }
 
+  /** The five built-in TripOS starters with values TripOS can fill reliably (customer, agency, the conversation's latest quotation). Not Meta templates. */
+  @Get(':id/starter-templates')
+  async starterList(@CurrentUser() p: Principal, @Param('id', ParseUUIDPipe) id: string) {
+    const ctx = await this.starterContext(p, id);
+    return { windowOpen: ctx.windowOpen, sendBlock: ctx.sendBlock, notice: MESSAGING_CHARGES_NOTICE, items: STARTERS.map((d) => ({ key: d.key, label: d.label, description: d.description, fields: placeholdersOf(d.body).map((n) => ({ name: n, label: STARTER_FIELDS[n]?.label ?? n, auto: ctx.auto[n] !== undefined })) })) };
+  }
+
+  /** Renders one starter for this conversation. `values` are the agent's own entries (they win over automatic values); unfilled fields are reported in `missing`. */
+  @Post(':id/starter-templates/:key/render')
+  async starterRender(@CurrentUser() p: Principal, @Param('id', ParseUUIDPipe) id: string, @Param('key') key: string, @Body() body: unknown) {
+    const def = getStarter(key);
+    if (!def) throw new NotFoundException({ code: 'not_found', message: 'Unknown message starter' });
+    const b = parse(z.object({ values: z.record(z.string().max(1000)).optional() }), body ?? {});
+    const ctx = await this.starterContext(p, id);
+    const names = placeholdersOf(def.body);
+    const entered: Record<string, string> = {};
+    for (const n of names) { const v = cleanValue(b.values?.[n]); if (v) entered[n] = v; }
+    const values = { ...ctx.auto, ...entered };
+    const r = renderStarter(def, values);
+    return {
+      key: def.key, label: def.label, text: r.text, missing: r.missing, windowOpen: ctx.windowOpen, sendBlock: ctx.sendBlock, notice: MESSAGING_CHARGES_NOTICE,
+      fields: names.map((n) => ({ name: n, label: STARTER_FIELDS[n]?.label ?? n, value: values[n] ?? '', auto: ctx.auto[n] !== undefined && entered[n] === undefined })),
+    };
+  }
+
+  private async starterContext(p: Principal, id: string) {
+    const agencyId = agencyOf(p);
+    return this.db.tenant(agencyId, async (tx) => {
+      const conv = await this.svc.getConversation(tx, p, agencyId, id);
+      const account = await tx.whatsappAccount.findFirst({ where: { agencyId } });
+      const quote = await tx.quote.findFirst({ where: { agencyId, conversationId: id, deletedAt: null, currentVersionId: { not: null } }, orderBy: { createdAt: 'desc' } });
+      const c = await this.templates.loadContext(tx, agencyId, { conversationId: id, quoteId: quote?.id });
+      const auto: Record<string, string> = {};
+      for (const n of AUTO_FIELDS) { const v = cleanValue((c.values as Record<string, string>)[n]); if (v) auto[n] = v; }
+      const d = durationOf(c.version?.trip);
+      if (d) auto.duration = d;
+      return { auto, windowOpen: windowState(conv.lastInboundAt).open, sendBlock: textSendBlock(conv, account) };
+    });
+  }
+
   @Post(':id/read')
   async read(@CurrentUser() p: Principal, @Param('id', ParseUUIDPipe) id: string) {
     const agencyId = agencyOf(p);
@@ -171,7 +226,7 @@ export class InboxController {
     const result = await this.outbound.send(agencyId, id, { kind: 'template', templateId: b.templateId, variables: prepared.variables, extra: prepared.extra }, { userId: p.userId, idempotencyKey: b.idempotencyKey });
     // Vehicle photos are free-form messages: only possible while the 24 h window is open, and only after the template went out.
     const photos: { assetId: string; ok: boolean; messageId?: string; error?: string }[] = [];
-    const windowOpen = !!conv.lastInboundAt && Date.now() - conv.lastInboundAt.getTime() < SERVICE_WINDOW_MS;
+    const windowOpen = windowState(conv.lastInboundAt).open;
     if (result.ok && windowOpen) {
       for (const assetId of b.photoAssetIds ?? []) {
         const r = await this.outbound.send(agencyId, id, { kind: 'image', assetId }, { userId: p.userId }).catch((e) => ({ ok: false, messageId: '', errorMessage: e?.response?.message ?? 'Send failed' } as any));
