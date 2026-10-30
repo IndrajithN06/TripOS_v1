@@ -9,6 +9,7 @@ import { MessageTicks } from '@/components/MessageTicks';
 import { ConfirmDeleteQuote, DeletableQuote } from '@/components/ConfirmDeleteQuote';
 import { canDeleteQuote } from '@/lib/quote-delete';
 import { dayLabel, initials } from '@/lib/inbox-view';
+import { extractToPrefill } from '@/lib/quote-prefill';
 
 const POLL_MS = 4000; // V1 uses short polling instead of SSE/WebSockets (see docs/DECISIONS_AND_ASSUMPTIONS.md)
 
@@ -85,10 +86,6 @@ function Conversation({ id, tick, onChanged, onBack, detailsOpen, onToggleDetail
     catch (e) { setAi(null); setAiErr(errMsg(e)); }
     setAiBusy(false);
   }
-  const extractToPrefill = (o: any) => {
-    const f = o.fields;
-    return { pickupLocation: f.pickupLocation ?? '', destinations: f.destination ?? '', passengers: f.passengers ? String(f.passengers) : '4', days: f.days ? String(f.days) : '1', tripType: f.tripType === 'local' ? 'local_8h_80km' : 'outstation' };
-  };
 
   if (detail.error) return <section className="inbox-chat"><ErrorBox e={detail.error} retry={detail.reload} /></section>;
   if (!d) return <section className="inbox-chat"><Loading /></section>;

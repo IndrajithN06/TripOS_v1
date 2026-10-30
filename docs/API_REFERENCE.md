@@ -9,7 +9,7 @@ Base URL (local): `http://localhost:4100`. The web app calls the API through its
 - **Roles:** `SA` Super Admin, `AA` Agency Admin, `S` Sales. "Any agency" = AA or S.
 - **Money:** decimal strings with two decimals (`"20400.00"`). Inputs accept strings or numbers with at most 2 decimals.
 - **Times:** ISO-8601 UTC in and out; the UI renders them in the agency timezone.
-- **Errors:** `{ "error": { "code", "message", "issues?" } }`. Common codes: `validation_error` (400), `unauthenticated` (401), `forbidden` / `csrf` (403), `not_found` (404), `conflict` / `immutable` / `version_sent` (409), `pricing_error` (422), `ai_unavailable` (503). Production responses never include stack traces.
+- **Errors:** `{ "error": { "code", "message", "issues?" } }`. Common codes: `validation_error` (400), `duration_required` (400), `unauthenticated` (401), `forbidden` / `csrf` (403), `not_found` (404), `conflict` / `immutable` / `version_sent` (409), `pricing_error` (422), `ai_unavailable` (503). Production responses never include stack traces.
 - **Rate limits:** login and accept-invite are limited to 10 per minute per client; general limit 600 per minute.
 - **Pagination:** list endpoints take `page` and `pageSize` (max 100).
 
@@ -98,7 +98,9 @@ Base URL (local): `http://localhost:4100`. The web app calls the API through its
 | POST | `/quotes/:id/follow-up` | `{followUpAt|null}` |
 | POST | `/quotes/:id/duplicate` | new quote number, version 1 |
 
-Draft body (`POST /quotes`, `PATCH .../draft`, `POST /quotes/calculate`): `trip{tripType, pickupAt, returnAt?, pickupLocation, destinations[], itinerary?, passengers, days?, hours?, km?, minKmMode?, dailyKm?[]}`, `vehicleTypeId`, `overrides{}`, `extraCharges[{label,amount,taxable}]`, `discount{type:amount|percent,value}`, `includeDriverBatta`, `inclusions/exclusions/notes/terms`, `imageAssetIds[]`, `expiryAt?`.
+**Trip duration (outstation).** An outstation trip is priced by its days (minimum km per day x days, and driver batta per day), so the server never guesses one. Every request that prices or saves a quote (`POST /quotes/calculate`, `POST /quotes`, `PATCH /quotes/:id/draft`, `POST /quotes/:id/versions`, and `POST /quotes/:id/duplicate`, which creates a quote) uses: an explicit `trip.days` (1-60) if given; otherwise the days derived from `trip.returnAt` (elapsed time from `pickupAt` in 24-hour blocks, rounded up, at least 1; the quote form uses the same rule); with neither it returns **`400 duration_required`** and nothing is priced, created or changed (no quote number is used). Previously the server silently used 1 day. Local packages (`local_8h_80km`, `local_4h_40km`) are priced by hours and km and are never affected. Reading a stored quote or version never recomputes anything, so older quotes stay viewable; a legacy outstation version stored without a duration can be duplicated or re-quoted once a `days` or `returnAt` is supplied.
+
+Draft body (`POST /quotes`, `PATCH .../draft`, `POST /quotes/calculate`): `trip{tripType, pickupAt, returnAt?, pickupLocation, destinations[], itinerary?, passengers, days? (outstation: days or returnAt required), hours?, km?, minKmMode?, dailyKm?[]}`, `vehicleTypeId`, `overrides{}`, `extraCharges[{label,amount,taxable}]`, `discount{type:amount|percent,value}`, `includeDriverBatta`, `inclusions/exclusions/notes/terms`, `imageAssetIds[]`, `expiryAt?`.
 
 ## Inbox (any agency; subject to the Sales visibility policy)
 | Method | Path | Notes |
