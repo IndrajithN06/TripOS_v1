@@ -7,7 +7,7 @@ This separates **finishing V1 for real use** (near-term) from **growing the prod
 |---|---|---|---|
 | R1 | **Meta template submission and status sync** | Templates are required outside the 24 h window; status must come from Meta, not be hand-set | Call the WABA message-template endpoints; poll or subscribe to template-status webhooks; map to `providerStatus`. Blocks real template use. |
 | R2 | **Live verification of the Cloud adapter** | Written, never run against Meta | Follow `WHATSAPP_GO_LIVE.md`; fix payload, media and error-mapping differences. Depends on Meta approval. |
-| R3 | **Live verification of S3, OpenAI, Resend adapters** | Same reason | Add an SMTP adapter if a non-Resend sender is preferred. |
+| R3 | **Live verification of S3 and Resend adapters** | Same reason | Add an SMTP adapter if a non-Resend sender is preferred. |
 | R4 | **Embedded Signup** | Agencies connect their own number without pasting IDs/tokens | Needs Meta app review for tech-provider permissions. |
 | R5 | **Realtime inbox (SSE or WebSocket)** | Polling every 4 s is fine for V1 volume, not for scale | Tenant-scoped subscriptions; reuse the same authorisation as the REST endpoints. |
 | R6 | **Browser E2E tests (Playwright) and accessibility audit** | Only API tests and manual screenshots exist | Cover onboarding, quote send/requote, branding refresh, dashboard; axe checks. |
@@ -31,16 +31,14 @@ These come from the long-term specification. Each phase keeps the rules in §D.
 | **P7 Fleet** | Documents, maintenance, utilisation | Expiry alerts, service intervals, utilisation reports. |
 | **P8 Automation** | WHEN → THEN rules | Booking confirmed, driver confirmed, trip tomorrow, payment overdue, document near expiry. |
 | **P9 Marketing** | Google Ads and attribution | Lead source and campaign persisted from lead through revenue; spend, cost per lead/booking, ROAS. |
-| **P10 AI operations** | Operational intelligence | Daily operations summaries and risk flags, still draft-only and tenant-scoped. |
 
 Additional roles in the specification (Tenant Owner, Operations Manager, Accounts, Driver) arrive with the phases that need them; the current three-role model and `PERMISSIONS` map are the extension point.
 
 ## C. How to extend safely
 - **New tenant table:** add `agencyId`, index it, add the table to the RLS list (see `SECURITY_AND_OPERATIONS.md` §5), grant the app role, and add an isolation test before shipping.
 - **New integration:** define an interface under `apps/api/src/providers`, ship a local fake first, add a production adapter selected by environment, and extend `validateConfig` so production cannot silently use the fake.
-- **New pricing rule:** add it to `packages/pricing` as pure logic with unit tests; the API only calls the library. Never compute money in the web app or in AI code.
+- **New pricing rule:** add it to `packages/pricing` as pure logic with unit tests; the API only calls the library. Never compute money in the web app.
 - **Money:** decimals only; `numeric(18,2)` in the database.
-- **Anything customer-facing and AI-generated** stays a staff-approved draft.
 - **Scaling path:** the modular monolith can split later along existing module lines. Swap the Postgres queue for BullMQ/SQS behind `JobsService`; move the worker to its own process; add read replicas for analytics if dashboard queries grow.
 
 ## D. Rules carried forward (from the specifications)

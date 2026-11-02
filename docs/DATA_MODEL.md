@@ -11,19 +11,19 @@ PostgreSQL 16, managed with Prisma migrations (`apps/api/prisma`). 24 tables and
 ### Tenancy and people
 | Table | Purpose | Key fields / constraints |
 |---|---|---|
-| `Agency` | A tenant | `slug` unique; `status` setup_pending / active / suspended; `timezone`, `currency`; tax (`taxEnabled`, `taxRatePercent`, `taxMode`); `salesVisibility`; `quoteValidityDays`; `quoteSeq` (per-agency quote counter); AI (`aiEnabled`, `aiMonthlyLimit`) |
+| `Agency` | A tenant | `slug` unique; `status` setup_pending / active / suspended; `timezone`, `currency`; tax (`taxEnabled`, `taxRatePercent`, `taxMode`); `salesVisibility`; `quoteValidityDays`; `quoteSeq` (per-agency quote counter) (the unused `aiEnabled` / `aiMonthlyLimit` columns remain in the database after the AI removal) |
 | `User` | Staff and platform users | `email` globally unique; `agencyId` null for Super Admin; `role`; `status` invited / active / disabled; `canOverrideRates`; `tokenVersion` (bumped to revoke sessions); `mfaSecret` (encrypted), `mfaEnabled` |
 | `Invitation` | Set-password tokens | stores a SHA-256 **hash** of the token; `expiresAt` (72 h); `usedAt` (single use) |
 | `AgencyBranding` | One row per agency | colour, tagline, contact details, footer, terms, default inclusions/exclusions, `logoAssetId` |
 | `SupportAccessGrant` | Time-limited cross-tenant support access | `superAdminId`, `agencyId`, `reason`, `expiresAt` |
-| `PlatformSetting` | Key/value platform flags | e.g. the AI kill switch |
+| `PlatformSetting` | Key/value platform flags | currently unused (it held the AI kill switch) |
 
 ### Customers and messaging
 | Table | Purpose | Key fields / constraints |
 |---|---|---|
 | `WhatsappAccount` | An agency's connection | one per agency; `phoneNumberId` unique (tenant resolution for webhooks); `credentialSecretRef` = AES-256-GCM encrypted token; `mode` simulator / cloud |
 | `Customer` | End customer | unique (`agencyId`, `phoneE164`) |
-| `Conversation` | A chat | `status` open / pending / closed; `assignedUserId`; `lastInboundAt` (drives the 24 h window); `unreadCount`; AI `summary` |
+| `Conversation` | A chat | `status` open / pending / closed; `assignedUserId`; `lastInboundAt` (drives the 24 h window); `unreadCount`; `summary` (unused since the AI removal) |
 | `ConversationNote` | Internal notes | never sent to customers |
 | `Message` | Inbound and outbound | `direction`, `type`, `status` (queued/submitted/sent/delivered/read/failed/received), `providerMessageId`, `simulated`, `idempotencyKey`; unique (`agencyId`,`providerMessageId`) and (`agencyId`,`idempotencyKey`) |
 | `WebhookEvent` | De-duplication ledger | unique (`agencyId`,`eventKey`) |
@@ -48,7 +48,7 @@ PostgreSQL 16, managed with Prisma migrations (`apps/api/prisma`). 24 tables and
 ### Operations
 | Table | Purpose |
 |---|---|
-| `AiUsage` | One row per AI call: feature, model, tokens, estimated cost, status |
+| `AiUsage` | Unused since the AI removal; the table remains until a migration drops it |
 | `AuditLog` | Append-only record of sensitive actions (`action`, `entityType`, `entityId`, `metadata`) |
 | `Job` | Postgres-backed queue: `type`, `payload`, `status`, `attempts`, `maxAttempts`, `runAt`, `lastError` |
 

@@ -3,7 +3,7 @@
 Multi-tenant SaaS for travel agencies: WhatsApp enquiry, branded quotation with vehicle photos, versioned negotiation, analytics dashboard.
 
 - **Status:** implemented and tested locally; **not deployed**. Real WhatsApp integration is waiting on Meta approval. Production deployment requires explicit owner approval.
-- **Stack:** Next.js 15 · NestJS · PostgreSQL with row-level security · pure decimal pricing library · provider adapters (storage / WhatsApp / AI / email).
+- **Stack:** Next.js 15 · NestJS · PostgreSQL with row-level security · pure decimal pricing library · provider adapters (storage / WhatsApp / email).
 
 Quick start (details in [docs/LOCAL_DEVELOPMENT.md](docs/LOCAL_DEVELOPMENT.md)):
 ```bash

@@ -9,7 +9,7 @@ Scope = the open items in `ROADMAP.md` section A, plus billing and launch work. 
 |---|---|---|
 | Meta template submission and status sync (R1) | 3-5 | |
 | Live verification and fixes of WhatsApp Cloud adapter (R2) | 3-6 | Depends on Meta approval and real traffic |
-| Live verification of S3, OpenAI, Resend; optional SMTP adapter (R3) | 2-4 | |
+| Live verification of S3 and Resend; optional SMTP adapter (R3) | 2-4 | |
 | Embedded Signup (R4) | 5-8 | Plus Meta app review wait; can launch without it by onboarding agencies manually |
 | Realtime inbox (R5) | 3-4 | Optional for first pilots |
 | Browser E2E tests and accessibility pass (R6) | 5-7 | |
@@ -55,7 +55,6 @@ Example, using ₹0.145 plus GST: an agency sending 5,000 messages a month pays 
 ### Other per-agency costs
 | Item | Estimate / month |
 |---|---|
-| AI (at the default 200 calls; small model) | ₹10 - 300, depending on provider and prompt size (measure with real usage) |
 | Storage and database share | ₹100 - 500 |
 | Payment gateway fees on subscriptions | ~2% of the subscription |
 | Support time | the dominant cost; plan for onboarding calls in month one |
@@ -63,7 +62,7 @@ Example, using ₹0.145 plus GST: an agency sending 5,000 messages a month pays 
 Typical variable cost: **₹300 - 1,500 per agency per month**, mostly WhatsApp.
 
 ## 4. Suggested subscription pricing
-Principle: price on **value** (faster, consistent, branded quotes; fewer lost enquiries), not on cost. Indian SMB tools in this space commonly sit in the low thousands of rupees per month plus message fees; validate against 3-5 pilot agencies. Limits below use things the product can actually meter today (users, quotes, AI calls); enforcement of plans is part of the billing work in section 1.
+Principle: price on **value** (faster, consistent, branded quotes; fewer lost enquiries), not on cost. Indian SMB tools in this space commonly sit in the low thousands of rupees per month plus message fees; validate against 3-5 pilot agencies. Limits below use things the product can actually meter today (users, quotes); enforcement of plans is part of the billing work in section 1.
 
 | | **Starter** | **Growth** | **Pro** |
 |---|---|---|---|
@@ -72,7 +71,6 @@ Principle: price on **value** (faster, consistent, branded quotes; fewer lost en
 | WhatsApp number | 1 | 1 | 1 (multiple numbers is a roadmap item) |
 | Vehicle types, photos | unlimited | unlimited | unlimited |
 | Quotes per month | 300 | 1,500 | 5,000 |
-| AI calls per month | 100 | 500 | 2,000 |
 | Dashboard | headline KPIs | full analytics | full analytics |
 | Support | email | email + chat | priority + onboarding session |
 

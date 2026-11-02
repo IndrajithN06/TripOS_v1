@@ -47,11 +47,6 @@ const schema = z.object({
   /** The Facebook Login for Business configuration id (v4) created in the Meta app dashboard. */
   WHATSAPP_EMBEDDED_SIGNUP_CONFIG_ID: z.string().optional(),
 
-  AI_PROVIDER: z.enum(['mock', 'disabled', 'openai']).default('mock'),
-  AI_MODEL: z.string().default('gpt-4o-mini'),
-  AI_API_KEY: z.string().optional(),
-  AI_TIMEOUT_MS: z.coerce.number().default(15000),
-
   EMAIL_PROVIDER: z.enum(['console', 'resend']).default('console'),
   EMAIL_API_KEY: z.string().optional(),
   EMAIL_FROM: z.string().default('TripOS <no-reply@localhost>'),
@@ -96,12 +91,9 @@ export function validateConfig(env: Record<string, string | undefined>): AppConf
     if (c.WHATSAPP_PROVIDER === 'cloud') {
       for (const k of ['WHATSAPP_APP_SECRET', 'WHATSAPP_VERIFY_TOKEN'] as const) if (!c[k]) problems.push(`${k} is required for the WhatsApp cloud provider`);
     }
-    if (c.AI_PROVIDER === 'mock' && !allowMock) problems.push('AI_PROVIDER "mock" is not allowed in production; use "openai" or "disabled"');
-    if (c.AI_PROVIDER === 'openai' && !c.AI_API_KEY) problems.push('AI_API_KEY is required when AI_PROVIDER=openai');
     if (c.EMAIL_PROVIDER === 'console' && !allowMock) problems.push('EMAIL_PROVIDER "console" is not allowed in production');
     if (c.EMAIL_PROVIDER === 'resend' && !c.EMAIL_API_KEY) problems.push('EMAIL_API_KEY is required when EMAIL_PROVIDER=resend');
   }
-  if (c.AI_PROVIDER === 'openai' && !c.AI_API_KEY) problems.push('AI_API_KEY is required when AI_PROVIDER=openai');
   // Outside production the check above does not run; without these two the webhook would fail silently
   // (every Meta delivery rejected as unsigned, and the verification handshake refused).
   if (c.NODE_ENV !== 'production' && c.WHATSAPP_PROVIDER === 'cloud') {

@@ -6,7 +6,7 @@
 | Typecheck (all packages) | `npm run typecheck` | no errors |
 | Pricing unit tests | `npm test` | 14 / 14 passed |
 | API unit tests (config safety, crypto, upload sniffing, webhook signature/parse, templates) | `npm test` | 21 / 21 passed |
-| API integration/e2e (isolation, permissions, vehicles, enquiry, quotes, versioning, delivery/retry, templates, window, AI, dashboard, analytics, invites/password reset, ops) | `npm run test:e2e` | 56 / 56 passed (4 suites) |
+| API integration/e2e (isolation, permissions, vehicles, enquiry, quotes, versioning, delivery/retry, templates, window, dashboard, analytics, invites/password reset, ops) | `npm run test:e2e` | 56 / 56 passed (4 suites) |
 | Browser checks (Edge headless, ad hoc scripts, not committed): dashboard render in light/dark, hover tooltip, invite-to-login flow, branding refresh without reload | manual | passed |
 | Production build (pricing, API, Next.js) | `npm run build` | succeeded |
 | `db:reset` + seed | `npm run db:reset` | succeeded |
@@ -24,13 +24,13 @@
 | 6 | Backend-authoritative totals; manipulated input rejected | `workflow`, pricing unit tests |
 | 7 | Versioning; v1 + PDF unchanged; DB trigger blocks raw SQL edits | `workflow` |
 | 8 | Duplicate webhooks, retry, partial media failure, forward-only statuses, idempotency | `workflow` |
-| 9 | AI outage/kill switch/limits; injection text cannot price or send | `workflow` |
+| 9 | The removed AI endpoints, settings and kill switch no longer exist; inbox, pricing and sending are unaffected | `workflow` |
 | 10 | Sales/Admin/Super Admin permission boundaries | `isolation` |
 | 11 | Production config refuses unsafe fallbacks | `config.spec.ts` |
 | 12 | Build/typecheck/tests | table above |
 
 ## Not verified / limitations (be aware before approving)
-- **No live provider has been exercised.** Meta Cloud API, S3, OpenAI and Resend adapters are written but untested against the real services. The WhatsApp simulator is not proof of a working Meta integration.
+- **No live provider has been exercised.** Meta Cloud API, S3 and Resend adapters are written but untested against the real services. The WhatsApp simulator is not proof of a working Meta integration.
 - **Meta template submission/status sync** is not implemented (the simulator mimics states; in `cloud` mode submission returns a clear "not implemented").
 - **No browser-automated UI tests** (Playwright) and **no accessibility audit**. The UI was built with labels/roles/keyboard handling, and compiled and smoke-tested via HTTP, but not clicked through by an automated browser here.
 - Real-time updates use polling, not SSE/WebSockets.
@@ -51,5 +51,4 @@
 7. Edit/Requote with a discount; confirm v2 is created and v1 (PDF, total) is unchanged; use **Compare**.
 8. Mark the quote accepted manually; check the Dashboard figures against the Quotes list.
 9. Sign in as the other agency and confirm none of the first agency's data is visible; sign in as sales and confirm Settings is absent.
-10. Turn off AI (kill switch as Super Admin) and confirm the inbox and quoting still work.
 11. Run `npm test` and `npm run test:e2e`.

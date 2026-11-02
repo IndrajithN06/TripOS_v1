@@ -27,7 +27,6 @@ Email/password (bcrypt), JWT in an httpOnly SameSite=Lax cookie, session revalid
 |---|---|---|
 | `StorageProvider` | local disk + HMAC-signed URLs | S3-compatible (S3/R2/MinIO), presigned URLs |
 | `WhatsAppProvider` | `SimulatorWhatsApp` (flagged `simulated`, failure injection) | `CloudWhatsApp` (Meta Cloud API) |
-| `AiProvider` | `MockAi` (deterministic), `DisabledAi` | `OpenAiProvider` |
 | `EmailProvider` | `ConsoleEmail` | `ResendEmail` |
 
 Selected by env; `validateConfig` refuses unsafe production combinations (mock/simulator/local storage/default secrets) unless the explicit `ALLOW_MOCK_PROVIDERS_IN_PRODUCTION=true` is set.
@@ -59,9 +58,9 @@ apps/api/src
   config/                           zod env schema + production safety checks
   common/                           auth guards, crypto, audit, errors, assets, placeholder PNG
   db/                               Db service: tenant() and system() transactions
-  providers/                        storage, whatsapp, ai, email (interface + adapters)
+  providers/                        storage, whatsapp, email (interface + adapters)
   modules/                          auth, platform, agency, vehicles, quotes, inbox, webhooks,
-                                    ai, dashboard (+ analytics), jobs, dev, health
+                                    dashboard (+ analytics), jobs, dev, health
 apps/api/prisma                     schema, migrations (RLS, triggers), seed, seed-history
 apps/api/test                       e2e suites (isolation, workflow, analytics, invites)
 packages/pricing                    pure pricing library + tests
@@ -70,4 +69,4 @@ docs/                               this documentation
 ```
 
 ## Testing
-Unit (pricing, config safety, crypto, webhook parsing/signature) and API e2e against a dedicated `tripos_test` database (isolation, permissions, vehicles, enquiry, quotes, versioning, delivery/retry, templates, AI, dashboard, analytics, invites and password reset). See `TESTING_AND_ACCEPTANCE.md` for counts and gaps.
+Unit (pricing, config safety, crypto, webhook parsing/signature) and API e2e against a dedicated `tripos_test` database (isolation, permissions, vehicles, enquiry, quotes, versioning, delivery/retry, templates, dashboard, analytics, invites and password reset). See `TESTING_AND_ACCEPTANCE.md` for counts and gaps.

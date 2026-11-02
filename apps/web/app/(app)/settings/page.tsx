@@ -6,7 +6,7 @@ import { EmbeddedSignup } from '@/components/EmbeddedSignup';
 import { TemplateManager } from '@/components/TemplateBuilder';
 import { ErrorBox, Field, Loading, SimTag, StatusBadge, useAction, useMe, useRefreshMe } from '@/components/ui';
 
-const TABS = [['branding', 'Profile & branding'], ['team', 'Team'], ['whatsapp', 'WhatsApp'], ['templates', 'WhatsApp Templates'], ['quotes', 'Quotes, tax & AI'], ['audit', 'Audit log']];
+const TABS = [['branding', 'Profile & branding'], ['team', 'Team'], ['whatsapp', 'WhatsApp'], ['templates', 'WhatsApp Templates'], ['quotes', 'Quotes & tax'], ['audit', 'Audit log']];
 
 export default function Settings() {
   const [tab, setTab] = useState('branding');
@@ -169,12 +169,7 @@ function QuoteSettings() {
         {v.taxEnabled && <div className="fields"><Field label="Tax rate (%)"><input type="number" min={0} max={100} step="0.01" value={v.taxRatePercent} onChange={(e) => set('taxRatePercent', Number(e.target.value))} /></Field><Field label="Prices are"><select value={v.taxMode} onChange={(e) => set('taxMode', e.target.value)}><option value="exclusive">Exclusive (tax added on top)</option><option value="inclusive">Inclusive (tax contained in total)</option></select></Field></div>}
         <div className="small muted">Discounts are applied before tax. Tax applies only to lines marked taxable. Rates are never hard-coded: they are whatever you set here.</div>
       </div>
-      <div className="card stack">
-        <h2>AI assistance</h2>
-        <label className="inline"><input type="checkbox" checked={v.aiEnabled} onChange={(e) => set('aiEnabled', e.target.checked)} />Enable AI drafts for this agency</label>
-        <div className="small muted">This month: {v.aiUsage.calls} calls · {v.aiUsage.inputTokens + v.aiUsage.outputTokens} tokens · est. ${v.aiUsage.estimatedCost} · limit {v.aiMonthlyLimit === 0 ? 'unlimited' : v.aiMonthlyLimit} (set by TripOS)</div>
-      </div>
-      <div><button className="btn primary" onClick={() => run(() => api('/agency/settings', { method: 'PATCH', body: { salesVisibility: v.salesVisibility, quoteValidityDays: v.quoteValidityDays, taxEnabled: v.taxEnabled, taxRatePercent: Number(v.taxRatePercent), taxMode: v.taxMode, aiEnabled: v.aiEnabled } }), 'Settings saved').then(() => { setF(null); reload(); })}>Save settings</button></div>
+      <div><button className="btn primary" onClick={() => run(() => api('/agency/settings', { method: 'PATCH', body: { salesVisibility: v.salesVisibility, quoteValidityDays: v.quoteValidityDays, taxEnabled: v.taxEnabled, taxRatePercent: Number(v.taxRatePercent), taxMode: v.taxMode } }), 'Settings saved').then(() => { setF(null); reload(); })}>Save settings</button></div>
     </div>
   );
 }

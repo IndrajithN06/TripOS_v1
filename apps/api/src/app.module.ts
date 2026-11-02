@@ -6,7 +6,6 @@ import { AuthGuard, CsrfGuard } from './common/auth';
 import { AllExceptionsFilter } from './common/errors';
 import { config } from './config/config';
 import { DbModule } from './db/db.service';
-import { AiService } from './modules/ai/ai.service';
 import { AgencyController } from './modules/agency/agency.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { AnalyticsController, AnalyticsService } from './modules/dashboard/analytics.module';
@@ -67,7 +66,7 @@ class CoreModule {}
     DashboardController, AnalyticsController, HealthController, MediaController, DevController,
   ],
   providers: [
-    PlatformService, WhatsappAccountService, EmbeddedSignupService, TemplatesService, QuotesService, OutboundService, InboxService, InboundService, AiService, DashboardService, AnalyticsService, WorkerBootstrap,
+    PlatformService, WhatsappAccountService, EmbeddedSignupService, TemplatesService, QuotesService, OutboundService, InboxService, InboundService, DashboardService, AnalyticsService, WorkerBootstrap,
     { provide: APP_GUARD, useClass: ThrottlerGuard },
     { provide: APP_GUARD, useClass: CsrfGuard },
     { provide: APP_GUARD, useClass: AuthGuard },

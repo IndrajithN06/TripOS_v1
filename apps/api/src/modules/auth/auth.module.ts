@@ -9,7 +9,6 @@ import { CurrentUser, PERMISSIONS, parse, Principal, Public, SESSION_COOKIE, sig
 import { decryptSecret, encryptSecret, randomToken, sha256 } from '../../common/crypto';
 import { config } from '../../config/config';
 import { Db, Tx } from '../../db/db.service';
-import { AI, AiProvider } from '../../providers/ai/ai';
 import { EMAIL, EmailProvider } from '../../providers/email/email';
 import { STORAGE, StorageProvider } from '../../providers/storage/storage';
 import { WHATSAPP, WhatsAppProvider } from '../../providers/whatsapp/whatsapp';
@@ -87,7 +86,6 @@ export class AuthController {
   constructor(
     private readonly auth: AuthService, private readonly db: Db,
     @Inject(STORAGE) private readonly storage: StorageProvider, @Inject(WHATSAPP) private readonly wa: WhatsAppProvider,
-    @Inject(AI) private readonly ai: AiProvider,
   ) {}
 
   @Public()
@@ -141,7 +139,7 @@ export class AuthController {
       permissions: PERMISSIONS[p.role],
       environment: {
         nodeEnv: config().NODE_ENV, whatsapp: this.wa.name, whatsappSimulated: this.wa.simulated, whatsappEmbeddedSignup: config().WHATSAPP_EMBEDDED_SIGNUP_ENABLED,
-        ai: this.ai.name, aiAvailable: this.ai.available, storage: this.storage.name,
+        storage: this.storage.name,
       },
     };
   }

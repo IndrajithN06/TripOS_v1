@@ -10,15 +10,13 @@ const slug = z.string().min(2).max(40).regex(/^[a-z0-9]+(-[a-z0-9]+)*$/, 'Lowerc
 const createSchema = z.object({
   name: z.string().min(2).max(120), legalName: z.string().max(200).optional(), slug,
   adminName: z.string().min(2).max(120), adminEmail: z.string().trim().email(),
-  plan: z.string().max(40).default('standard'), aiMonthlyLimit: z.number().int().min(0).max(1_000_000).default(200),
+  plan: z.string().max(40).default('standard'),
   timezone: z.string().default('Asia/Kolkata'),
 });
 const patchSchema = z.object({
   status: z.enum(['active', 'suspended']).optional(), name: z.string().min(2).max(120).optional(),
-  aiEnabled: z.boolean().optional(), aiMonthlyLimit: z.number().int().min(0).optional(), plan: z.string().max(40).optional(),
+  plan: z.string().max(40).optional(),
 });
-
-export const AI_KILL_KEY = 'ai_kill_switch';
 
 @Injectable()
 export class PlatformService {
@@ -28,7 +26,7 @@ export class PlatformService {
     const email = input.adminEmail.toLowerCase();
     const result = await this.db.system(async (tx) => {
       if (await tx.user.findUnique({ where: { email } })) throw new BadRequestException({ code: 'email_taken', message: 'A user with this email already exists' });
-      const agency = await tx.agency.create({ data: { name: input.name, legalName: input.legalName, slug: input.slug, plan: input.plan, aiMonthlyLimit: input.aiMonthlyLimit, timezone: input.timezone } });
+      const agency = await tx.agency.create({ data: { name: input.name, legalName: input.legalName, slug: input.slug, plan: input.plan, timezone: input.timezone } });
       await tx.agencyBranding.create({ data: { agencyId: agency.id } });
       const admin = await tx.user.create({ data: { agencyId: agency.id, name: input.adminName, email, role: 'AGENCY_ADMIN', status: 'invited' } });
       const inv = await this.invites.create(tx, admin, agency.name);
@@ -41,18 +39,17 @@ export class PlatformService {
   }
 
   async list(q: { search?: string; status?: string }) {
-    const monthStart = new Date(Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), 1));
     return this.db.system(async (tx) => {
       const agencies = await tx.agency.findMany({
         where: { status: q.status || undefined, OR: q.search ? [{ name: { contains: q.search, mode: 'insensitive' } }, { slug: { contains: q.search, mode: 'insensitive' } }] : undefined },
         orderBy: { createdAt: 'desc' }, take: 200,
       });
       return Promise.all(agencies.map(async (a) => {
-        const [users, conversations, quotes, aiCalls, failedJobs] = await Promise.all([
+        const [users, conversations, quotes, failedJobs] = await Promise.all([
           tx.user.count({ where: { agencyId: a.id } }), tx.conversation.count({ where: { agencyId: a.id } }), tx.quote.count({ where: { agencyId: a.id, deletedAt: null } }),
-          tx.aiUsage.count({ where: { agencyId: a.id, createdAt: { gte: monthStart } } }), tx.job.count({ where: { agencyId: a.id, status: 'failed' } }),
+          tx.job.count({ where: { agencyId: a.id, status: 'failed' } }),
         ]);
-        return { id: a.id, name: a.name, slug: a.slug, status: a.status, plan: a.plan, aiEnabled: a.aiEnabled, aiMonthlyLimit: a.aiMonthlyLimit, createdAt: a.createdAt, usage: { users, conversations, quotes, aiCalls, failedJobs } };
+        return { id: a.id, name: a.name, slug: a.slug, status: a.status, plan: a.plan, createdAt: a.createdAt, usage: { users, conversations, quotes, failedJobs } };
       }));
     });
   }
@@ -103,18 +100,6 @@ export class PlatformService {
     });
   }
 
-  async getSettings() {
-    const s = await this.db.system((tx) => tx.platformSetting.findUnique({ where: { key: AI_KILL_KEY } }));
-    return { aiKillSwitch: (s?.value as any)?.on === true };
-  }
-  async setAiKill(p: Principal, on: boolean) {
-    await this.db.system(async (tx) => {
-      await tx.platformSetting.upsert({ where: { key: AI_KILL_KEY }, create: { key: AI_KILL_KEY, value: { on } }, update: { value: { on } } });
-      await audit(tx, { agencyId: null, actorUserId: p.userId, action: 'platform.ai_kill_switch', entityType: 'platform', metadata: { on } });
-    });
-    return { aiKillSwitch: on };
-  }
-
   async errors() {
     return this.db.system((tx) => tx.job.findMany({ where: { status: 'failed' }, orderBy: { createdAt: 'desc' }, take: 50, select: { id: true, agencyId: true, type: true, attempts: true, lastError: true, createdAt: true } }));
   }
@@ -134,7 +119,5 @@ export class PlatformController {
     return this.svc.grantSupport(p, i.agencyId, i.reason, i.minutes);
   }
   @Get('support/:id/conversations') supportConvs(@CurrentUser() p: Principal, @Param('id', ParseUUIDPipe) id: string) { return this.svc.supportConversations(p, id); }
-  @Get('settings') settings() { return this.svc.getSettings(); }
-  @Patch('settings') setSettings(@CurrentUser() p: Principal, @Body() b: unknown) { return this.svc.setAiKill(p, parse(z.object({ aiKillSwitch: z.boolean() }), b).aiKillSwitch); }
   @Get('errors') errors() { return this.svc.errors(); }
 }

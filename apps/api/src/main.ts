@@ -33,7 +33,7 @@ async function bootstrap() {
   const cfg = config();
   await app.listen(cfg.PORT);
   const log = new Logger('Bootstrap');
-  log.log(`TripOS API on :${cfg.PORT} (${cfg.NODE_ENV}) storage=${cfg.STORAGE_PROVIDER} whatsapp=${cfg.WHATSAPP_PROVIDER} ai=${cfg.AI_PROVIDER}`);
+  log.log(`TripOS API on :${cfg.PORT} (${cfg.NODE_ENV}) storage=${cfg.STORAGE_PROVIDER} whatsapp=${cfg.WHATSAPP_PROVIDER}`);
   if (cfg.WHATSAPP_PROVIDER === 'simulator') log.warn('WhatsApp SIMULATOR active: no real messages are sent.');
 }
 

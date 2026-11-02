@@ -1,4 +1,4 @@
-import { dayLabel, initials, tickFor } from './inbox-view';
+import { chatStatus, dayLabel, initials, tickFor } from './inbox-view';
 
 describe('tickFor (delivery state -> tick)', () => {
   it('shows blue "read" ticks only for the exact status read', () => {
@@ -49,5 +49,24 @@ describe('dayLabel (agency timezone)', () => {
   });
   it('prints a short date for older messages', () => {
     expect(dayLabel('2026-10-10T08:00:00Z', 'Asia/Kolkata', now)).toMatch(/10 Oct 2026/);
+  });
+});
+
+describe('chatStatus: connection first, then the 24-hour window', () => {
+  it('disconnected account -> Disconnected, even when the window would be open or closed', () => {
+    for (const windowOpen of [true, false]) {
+      expect(chatStatus({ sendBlockCode: 'whatsapp_not_connected', windowOpen })).toMatchObject({ kind: 'disconnected', tone: 'red', label: 'Disconnected' });
+    }
+  });
+  it('connected with an open window -> free replies open', () => {
+    expect(chatStatus({ sendBlockCode: null, windowOpen: true })).toMatchObject({ kind: 'open', tone: 'green' });
+    expect(chatStatus({ windowOpen: true })).toMatchObject({ kind: 'open' });
+  });
+  it('connected with a closed window -> template only', () => {
+    expect(chatStatus({ sendBlockCode: 'window_closed', windowOpen: false })).toMatchObject({ kind: 'template_only', tone: 'amber', label: 'Template only' });
+    expect(chatStatus({ sendBlockCode: null, windowOpen: false })).toMatchObject({ kind: 'template_only' });
+  });
+  it('every state explains itself in a tooltip', () => {
+    for (const o of [{ sendBlockCode: 'whatsapp_not_connected', windowOpen: false }, { windowOpen: true }, { windowOpen: false }]) expect(chatStatus(o).title.length).toBeGreaterThan(20);
   });
 });
