@@ -105,16 +105,29 @@ Draft body (`POST /quotes`, `PATCH .../draft`, `POST /quotes/calculate`): `trip{
 ## Inbox (any agency; subject to the Sales visibility policy)
 | Method | Path | Notes |
 |---|---|---|
-| GET | `/inbox/conversations` | `search`, `filter` (all, unread, mine, unassigned, open, closed, quoted) |
-| GET | `/inbox/conversations/:id` | customer, assignee, notes, quotes, 24h-window state (`windowOpen`, `windowExpiresAt`), `sendBlock` (`null`, or `{code, message}` explaining why a free-form text cannot be sent now: `window_closed` or `whatsapp_not_connected`), `chargesNotice` |
+| GET | `/inbox/conversations` | `search`, `filter` (all, unread, new, active, waiting, resolved, quoted; `open`, `closed`, `mine` and `unassigned` still work). Each item has `workflow` (`new`, `active`, `waiting` or `resolved`, derived from messages) beside the stored `status`; the response also carries `salesVisibility` (`all` or `assigned`). Optional `focus=<conversationId>` pins that chat to the top of the unfiltered, unsearched first page (used when a customer or quotation links to its chat, so an older chat is still shown); it follows the same visibility rule as the list, so a chat the caller may not see is never added |
+| GET | `/inbox/conversations/:id` | `workflow`, stored `status`, `salesVisibility`; the customer (name, phone, email, internal `notes`, `since`) with `customerHistory` (`otherConversations`, `quotes`, `acceptedQuotes`, limited to what the caller may see); the assignee; internal notes; the chat's quotes, each with `status`, `destination`, `total`, `versionNumber`, `createdAt`, `followUpAt` and `followUpOverdue` (the dashboard's rule: an open, unexpired quote whose follow-up date has passed); 24h-window state (`windowOpen`, `windowExpiresAt`); `sendBlock` (`null`, or `{code, message}` explaining why a free-form text cannot be sent now: `window_closed` or `whatsapp_not_connected`); `chargesNotice` |
 | GET | `/inbox/conversations/:id/messages` | `limit`, `before` |
 | POST | `/inbox/conversations/:id/messages` | `{type:'text',text}` or `{type:'template',templateId,variables[]}`, optional `idempotencyKey` |
 | GET | `/inbox/conversations/:id/starter-templates` | The five built-in TripOS message starters (Quotation Ready, Quote Follow-up, Booking Confirmation, Payment Reminder, Upcoming Trip Reminder) with their fields, plus `windowOpen`, `sendBlock` and a neutral `notice`. Read-only; same visibility rule as the conversation |
 | POST | `/inbox/conversations/:id/starter-templates/:key/render` | `{values?}` (the agent's own entries). Returns the filled `text`, `missing[]` fields and per-field `auto` flags. Sends and stores nothing; the agent edits the text and sends it through the text path above |
 | POST | `/inbox/conversations/:id/messages/:messageId/retry` | failed text only |
+| POST | `/inbox/conversations/:id/resolve` | the one manual workflow action: marks the chat resolved (stored `closed`). Idempotent and audited. A new customer message reopens it |
 | POST | `/inbox/conversations/:id/read` | clears unread |
 | POST | `/inbox/conversations/:id/notes` | internal, never sent |
-| PATCH | `/inbox/conversations/:id` | `assignedUserId` (must be an active user of this agency), `status` |
+| PATCH | `/inbox/conversations/:id` | `assignedUserId` (must be an active user of this agency), `status`. Kept for agencies that use assigned-only visibility and for compatibility; the inbox UI does not use `status` |
+
+**Conversation workflow (no manual status).** The stored `Conversation.status` keeps its three values (`open`, `pending`, `closed`), so no migration was needed. The four states shown to staff come from it plus one fact, whether the agency has ever answered the chat (an outbound message the provider accepted): **new** = open and never answered; **active** = open and answered before; **waiting** = pending; **resolved** = closed.
+
+| Event | Stored status |
+|---|---|
+| Customer sends a message (a first message creates the chat) | `open` (reopens a waiting or resolved chat) |
+| An employee's reply is accepted by the provider | `pending`, unless a customer message arrived after that reply was created |
+| A message typed in the WhatsApp Business app (coexistence echo) | `pending`, under the same rule |
+| `POST /inbox/conversations/:id/resolve` | `closed` |
+| A failed send, a rejected send, or a background retry (no user) | unchanged |
+
+Sending a quotation moves the chat to waiting like any reply, but never changes the quotation's own status (quote status and conversation status are separate), and the 24-hour window is separate too. Imported history never changes the status.
 
 **Free-form text and the service window.** A free-form text is accepted only while the conversation's last *inbound* message is less than 24 hours old (exactly 24 hours is closed; our own messages never extend it). Otherwise the API returns `400 window_closed`, and a disconnected number returns `400 whatsapp_not_connected` (checked first, with the stored reason). Outside the window only an approved Meta template can be sent; a template that is not `approved` returns `400 template_not_approved`, and nothing is ever sent as a text instead. The check is made on the server on every send, and `sendBlock` on the conversation only mirrors it for the UI.
 

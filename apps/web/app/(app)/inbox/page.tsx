@@ -1,7 +1,7 @@
 'use client';
 import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
 import { api, useApi } from '@/lib/api';
-import { fmtRelative, fmtTime, inr } from '@/lib/format';
+import { fmtRelative, fmtTime } from '@/lib/format';
 import { Empty, ErrorBox, Loading, SimTag, StatusBadge, errMsg, useAction, useMe } from '@/components/ui';
 import { QuoteBuilder } from '@/components/QuoteBuilder';
 import { InboxTemplateModal } from '@/components/InboxTemplateModal';
@@ -11,8 +11,10 @@ import { ImageLightbox } from '@/components/ImageLightbox';
 import { composerState } from '@/lib/starter-send';
 import { MessageTicks } from '@/components/MessageTicks';
 import { ConfirmDeleteQuote, DeletableQuote } from '@/components/ConfirmDeleteQuote';
-import { canDeleteQuote } from '@/lib/quote-delete';
 import { chatStatus, dayLabel, initials } from '@/lib/inbox-view';
+import { workflowChip } from '@/lib/inbox-workflow';
+import { conversationFromSearch, inboxLink, listPath } from '@/lib/inbox-link';
+import { CustomerDetailsPanel } from '@/components/CustomerDetailsPanel';
 
 const POLL_MS = 4000; // V1 uses short polling instead of SSE/WebSockets (see docs/DECISIONS_AND_ASSUMPTIONS.md)
 
@@ -25,8 +27,17 @@ export default function InboxPage() {
   const [tick, setTick] = useState(0);
   const [chatOpen, setChatOpen] = useState(false), [detailsOpen, setDetailsOpen] = useState(false); // narrow screens only: which pane is showing
   useEffect(() => { const t = setInterval(() => setTick((x) => x + 1), POLL_MS); return () => clearInterval(t); }, []);
-  const list = useApi<any>(`/inbox/conversations?filter=${filter}&search=${encodeURIComponent(search)}`, [tick]);
-  useEffect(() => { if (!sel && list.data?.items?.length) setSel(list.data.items[0].id); }, [list.data, sel]);
+  // A link such as /inbox?conversation=<id> (from a customer or a quotation) opens that exact chat. Without one, the first chat is selected as before.
+  const [linkRead, setLinkRead] = useState(false), [focusId, setFocusId] = useState<string | null>(null);
+  useEffect(() => {
+    const id = conversationFromSearch(window.location.search);
+    if (id) { setSel(id); setFocusId(id); setChatOpen(true); }
+    setLinkRead(true);
+  }, []);
+  // The list is requested once the link has been read, so the linked chat can be pinned to the top of the list (highlighted as the selected one).
+  const list = useApi<any>(linkRead ? listPath({ filter, search, focusId }) : null, [tick]);
+  useEffect(() => { if (linkRead && !sel && list.data?.items?.length) setSel(list.data.items[0].id); }, [list.data, sel, linkRead]);
+  const choose = useCallback((id: string) => { setSel(id); setChatOpen(true); setDetailsOpen(false); window.history.replaceState(null, '', inboxLink(id)); }, []);
 
   return (
     <div className={`inbox${chatOpen ? ' chat-open' : ''}${detailsOpen ? ' details-open' : ''}`}>
@@ -34,20 +45,19 @@ export default function InboxPage() {
         <div className="inbox-search">
           <input type="search" aria-label="Search conversations" placeholder="Search name, phone or message" value={search} onChange={(e) => setSearch(e.target.value)} />
           <select aria-label="Filter conversations" value={filter} onChange={(e) => setFilter(e.target.value)}>
-            <option value="all">All conversations</option><option value="unread">Unread</option><option value="mine">Assigned to me</option><option value="unassigned">Unassigned</option><option value="open">Open</option><option value="closed">Closed</option><option value="quoted">With a quote</option>
-          </select>
+            <option value="all">All conversations</option><option value="unread">Unread</option><option value="new">New</option><option value="active">Active</option><option value="waiting">Waiting</option><option value="resolved">Resolved</option><option value="quoted">With a quote</option></select>
         </div>
         <div className="conv-list">
           {list.error && <ErrorBox e={list.error} retry={list.reload} />}
           {!list.data && list.loading && <Loading what="Loading conversations" />}
           {list.data?.items.length === 0 && <Empty>No conversations yet.{me.environment.whatsappSimulated && ' Use the simulator panel on the right to receive a test enquiry.'}</Empty>}
           {list.data?.items.map((c: any) => (
-            <div key={c.id} className={`conv ${sel === c.id ? 'sel' : ''}`} onClick={() => { setSel(c.id); setChatOpen(true); setDetailsOpen(false); }} role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === 'Enter') { setSel(c.id); setChatOpen(true); setDetailsOpen(false); } }}>
+            <div key={c.id} className={`conv ${sel === c.id ? 'sel' : ''}`} onClick={() => choose(c.id)} role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === 'Enter') choose(c.id); }}>
               <Avatar name={c.customer?.name} />
               <div className="conv-body">
                 <div className="conv-top"><strong>{c.customer?.name}</strong><span className="conv-time">{fmtRelative(c.lastMessageAt)}</span></div>
                 <div className="conv-mid"><span className="conv-prev">{c.preview}</span>{c.unreadCount > 0 && <span className="unread" aria-label={`${c.unreadCount} unread`}>{c.unreadCount}</span>}</div>
-                {(c.lastQuote || c.assignedUser) && <div className="conv-tags">{c.lastQuote && <StatusBadge s={c.lastQuote.status} />}{c.assignedUser && <span className="muted">→ {c.assignedUser.name}</span>}</div>}
+                <div className="conv-tags"><span className={`badge ${workflowChip(c.workflow).tone}`} title={workflowChip(c.workflow).title} data-testid="workflow-chip" data-workflow={c.workflow}>{workflowChip(c.workflow).label}</span>{c.lastQuote && <StatusBadge s={c.lastQuote.status} />}{list.data?.salesVisibility === 'assigned' && c.assignedUser && <span className="muted">→ {c.assignedUser.name}</span>}</div>
               </div>
             </div>
           ))}
@@ -62,7 +72,6 @@ function Conversation({ id, tick, onChanged, onBack, detailsOpen, onToggleDetail
   const me = useMe(), run = useAction();
   const detail = useApi<any>(`/inbox/conversations/${id}`, [tick]);
   const msgs = useApi<any>(`/inbox/conversations/${id}/messages?limit=100`, [tick]);
-  const users = useApi<any[]>(me.user.role === 'AGENCY_ADMIN' ? '/agency/users' : null);
   const [text, setText] = useState(''), [builder, setBuilder] = useState<{ quoteId?: string; prefill?: any } | null>(null), [sending, setSending] = useState(false);
   const [note, setNote] = useState('');
   const [tplModal, setTplModal] = useState(false), [starterOpen, setStarterOpen] = useState(false), [lightbox, setLightbox] = useState<string | null>(null), [delQuote, setDelQuote] = useState<DeletableQuote | null>(null);
@@ -73,6 +82,8 @@ function Conversation({ id, tick, onChanged, onBack, detailsOpen, onToggleDetail
 
   const d = detail.data;
   const reload = () => { void detail.reload(); void msgs.reload(); onChanged(); };
+
+  const resolve = () => run(() => api(`/inbox/conversations/${id}/resolve`, { body: {} }), 'Marked as resolved').then(reload);
 
   async function sendText() {
     if (!text.trim()) return;
@@ -87,6 +98,7 @@ function Conversation({ id, tick, onChanged, onBack, detailsOpen, onToggleDetail
   const disconnectedBannerVisible = me.agency?.whatsapp?.status === 'disconnected';
   const composer = composerState({ sendBlock: d?.sendBlock, text, sending, disconnectedBannerVisible });
   const status = d ? chatStatus({ sendBlockCode: d.sendBlock?.code, windowOpen: d.windowOpen }) : null;
+  const wf = d ? workflowChip(d.workflow) : null;
   if (detail.error) return <section className="inbox-chat"><ErrorBox e={detail.error} retry={detail.reload} /></section>;
   if (!d) return <section className="inbox-chat"><Loading /></section>;
 
@@ -98,7 +110,9 @@ function Conversation({ id, tick, onChanged, onBack, detailsOpen, onToggleDetail
           <Avatar name={d.customer.name} />
           <div className="chat-who"><strong>{d.customer.name}</strong><span className="muted small">{d.customer.phone}</span></div>
           <div className="chat-actions">
+            {wf && <span className={`badge ${wf.tone}`} title={wf.title} data-testid="workflow-chip" data-workflow={d.workflow}>{wf.label}</span>}
             {status && <span className={`badge ${status.tone}`} title={status.title} data-testid="chat-status" data-kind={status.kind}>{status.label}</span>}
+            {d.workflow !== 'resolved' && <button className="btn sm" onClick={resolve} title="Mark this enquiry as resolved. A new message from the customer reopens it">Resolve</button>}
             <button className="btn sm details-btn" onClick={onToggleDetails} aria-expanded={detailsOpen} aria-label="Customer details">ⓘ Details</button>
           </div>
         </div>
@@ -141,34 +155,11 @@ function Conversation({ id, tick, onChanged, onBack, detailsOpen, onToggleDetail
         />
       </section>
 
-      <section className="inbox-details" aria-label="Customer details">
-        <div className="details-head"><strong>Customer details</strong><button className="btn sm details-close" onClick={onToggleDetails} aria-label="Close details">✕</button></div>
-        <div className="panel-sec stack">
-          <div className="row" style={{ flexWrap: 'nowrap' }}><Avatar name={d.customer.name} /><h3 style={{ margin: 0 }}>Customer</h3></div>
-          <div>{d.customer.name}<br /><span className="muted small">{d.customer.phone}{d.customer.email ? ` · ${d.customer.email}` : ''}</span></div>
-          {me.user.role === 'AGENCY_ADMIN' ? (
-            <label>Assigned to<select value={d.assignedUser?.id ?? ''} onChange={(e) => run(() => api(`/inbox/conversations/${id}`, { method: 'PATCH', body: { assignedUserId: e.target.value || null } }), 'Assignment updated').then(reload)}>
-              <option value="">Unassigned</option>{users.data?.filter((u) => u.status === 'active').map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}</select></label>
-          ) : <div className="small">Assigned to: {d.assignedUser?.name ?? 'Unassigned'} {!d.assignedUser && <button className="btn sm" onClick={() => run(() => api(`/inbox/conversations/${id}`, { method: 'PATCH', body: { assignedUserId: me.user.id } }), 'Assigned to you').then(reload)}>Take</button>}</div>}
-          <label>Status<select value={d.status} onChange={(e) => run(() => api(`/inbox/conversations/${id}`, { method: 'PATCH', body: { status: e.target.value } })).then(reload)}><option value="open">Open</option><option value="pending">Pending</option><option value="closed">Closed</option></select></label>
-        </div>
-
-        <div className="panel-sec stack">
-          <div className="row between"><h3 style={{ margin: 0 }}>Quotes</h3><button className="btn sm" onClick={() => setBuilder({})}>＋ New</button></div>
-          {d.quotes.length === 0 && <div className="small muted">No quotes in this chat yet.</div>}
-          {d.quotes.map((q: any) => (
-            <div className="row between" key={q.id}><a href={`/quotes/${q.id}`}>{q.quoteNumber}</a><span className="row"><StatusBadge s={q.status} /><button className="btn sm" onClick={() => setBuilder({ quoteId: q.id })}>Edit / Requote</button>{canDeleteQuote(me.user, q.ownerUserId) && <button className="btn sm danger" aria-label={`Delete quote ${q.quoteNumber}`} onClick={() => setDelQuote({ id: q.id, quoteNumber: q.quoteNumber, customer: d.customer.name, status: q.status })}>Delete</button>}</span></div>
-          ))}
-        </div>
-
-        <div className="panel-sec stack">
-          <h3>Internal notes <span className="muted small">(never sent to the customer)</span></h3>
-          {d.notes.map((n: any) => <div key={n.id} className="small" style={{ background: 'var(--amberbg)', padding: 8, borderRadius: 8 }}>{n.text}<div className="muted">{n.author} · {fmtRelative(n.createdAt)}</div></div>)}
-          <div className="row" style={{ flexWrap: 'nowrap' }}><input aria-label="Add note" value={note} onChange={(e) => setNote(e.target.value)} placeholder="Add a note…" /><button className="btn sm" onClick={() => note.trim() && run(() => api(`/inbox/conversations/${id}/notes`, { body: { text: note } })).then(() => { setNote(''); reload(); })}>Add</button></div>
-        </div>
-
+      <CustomerDetailsPanel
+        d={d} onReload={reload} onClose={onToggleDetails} onNewQuote={() => setBuilder({})} onEditQuote={(quoteId) => setBuilder({ quoteId })} onDeleteQuote={setDelQuote}
+      >
         {me.environment.whatsappSimulated && <SimulatorPanel onDone={reload} />}
-      </section>
+      </CustomerDetailsPanel>
 
       {lightbox && <ImageLightbox url={lightbox} onClose={() => setLightbox(null)} />}
       {delQuote && <ConfirmDeleteQuote quote={delQuote} onClose={() => setDelQuote(null)} onDeleted={() => { setDelQuote(null); reload(); }} />}

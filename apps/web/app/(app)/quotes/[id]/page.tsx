@@ -2,6 +2,7 @@
 import { useParams, useRouter } from 'next/navigation';
 import { useState } from 'react';
 import { api, useApi } from '@/lib/api';
+import { inboxLink } from '@/lib/inbox-link';
 import { fmtDateTime, inr, isoToZoned, zonedToIso } from '@/lib/format';
 import { ErrorBox, Loading, Modal, StatusBadge, useAction, useMe } from '@/components/ui';
 import { QuoteBuilder } from '@/components/QuoteBuilder';
@@ -27,7 +28,7 @@ export default function QuoteDetail() {
         <div>
           <a href="/quotes" className="small">&larr; Quotes</a>
           <div className="row"><h1>{q.quoteNumber}</h1><StatusBadge s={q.status} /><span className="badge">current v{cur.versionNumber}</span></div>
-          <div className="muted small">{q.customer.name} · {q.customer.phone}{q.conversationId && <> · <a href="/inbox">Open chat</a></>}</div>
+          <div className="muted small">{q.customer.name} · {q.customer.phone}{q.conversationId && <> · <a href={inboxLink(q.conversationId)}>Open chat</a></>}</div>
         </div>
         <div className="row">
           {!closed && !cur.immutable && <button className="btn blue" onClick={() => setSendV(cur.versionNumber)}>Send Quotation on WhatsApp</button>}
@@ -66,7 +67,7 @@ export default function QuoteDetail() {
 
       <div className="card stack" style={{ marginTop: 14 }}>
         <h2>Version history</h2>
-        <div className="table-wrap"><table>
+        <div className="table-wrap sticky-head"><table>
           <thead><tr><th>Version</th><th>Created</th><th className="right">Total</th><th>Delivery</th><th /></tr></thead>
           <tbody>{[...q.versions].reverse().map((v: any, i: number, arr: any[]) => (
             <tr key={v.id}>

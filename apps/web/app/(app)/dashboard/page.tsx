@@ -118,7 +118,8 @@ export default function Dashboard() {
         </ChartCard>
       </div>
 
-      <div className="row"><Link className="btn primary" href="/inbox">Open inbox</Link><Link className="btn" href="/quotes">All quotes</Link><span className="muted small">Counts of quotes use parent quotes; pipeline uses the current version of open quotes only.</span></div>
+      <div className="muted small" style={{ marginTop: 14 }}>Counts of quotes use parent quotes; pipeline uses the current version of open quotes only.</div>
+      <div className="row module-footer"><Link className="btn primary" href="/inbox">Open inbox</Link><Link className="btn" href="/quotes">All quotes</Link></div>
     </div>
   );
 }

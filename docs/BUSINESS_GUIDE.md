@@ -18,7 +18,7 @@ Each agency is an independent tenant with its own users, branding, vehicles, rat
 | **Agency Admin** | Agency owner or manager | Everything inside their agency: team, branding, vehicles and rates, WhatsApp connection, templates, tax and quote settings, all chats and quotes, full dashboard. |
 | **Sales** | Agency staff | Handle chats, create/edit/send quotes, add notes, follow up. Can view vehicles but not change them. Cannot see settings, other agencies or integration secrets. Changing rates or applying discounts is allowed only if the admin has enabled "can change rates" for that person. |
 
-Agency admins can choose whether Sales see **all** agency chats and quotes or **only their own / assigned** ones (Settings → Quotes & tax).
+Agency admins can choose whether Sales see **all** agency chats and quotes or **only their own / assigned** ones (Settings → Quotes & tax). With the default (**all**), nobody has to assign chats: anyone can open and answer any enquiry. Assignment controls appear in a chat's details only when an agency chooses assigned-only visibility, where an admin assigns chats to Sales.
 
 ## 3. Setting up an agency (first day)
 1. **Super Admin** creates the agency (name, slug, first admin's name and email). The admin receives an invitation link to set a password (valid 72 hours, single use).
@@ -53,6 +53,16 @@ Nothing is hard-coded: every number is the agency's own. Changing a rate affects
 ## 5. Daily workflow
 ### 5.1 A new enquiry
 A customer messages the agency's WhatsApp number. TripOS finds or creates the customer and conversation (by phone number), stores the message, shows an unread badge.
+
+### 5.1a Conversation status (automatic)
+Nobody picks a status. Every chat shows one of four, worked out from the messages:
+- **New:** a customer wrote and nobody has answered yet.
+- **Active:** the customer is waiting for the next reply (they wrote again after you answered, or the chat is being handled).
+- **Waiting:** you replied and are waiting for the customer.
+- **Resolved:** you pressed **Resolve** because the enquiry is finished. If the customer writes again, the chat reopens by itself.
+A failed message does not count as a reply. Quotation status (draft, sent, accepted...) is separate from conversation status.
+
+The **Details** panel beside a chat has three tabs: **Customer** (contact, a next-step suggestion, the WhatsApp window, history and the customer's note), **Quotes** (each quotation with its total, status, follow-up date and actions) and **Notes** (private team notes, never sent to the customer).
 
 ### 5.2 Building a quote (in the chat)
 1. Open the conversation, click **New quote**.

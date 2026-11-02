@@ -21,15 +21,21 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .nav a:hover { background: rgba(255,255,255,.07); } .nav a.active { background: rgba(255,255,255,.14); color: #fff; font-weight: 600; }
 .nav .spacer { flex: 1; } .nav .who { font-size: 12px; padding: 8px 10px; color: #8fa0b5; }
 /* --main-px is the page's side padding; the sticky module header reaches into it so its background covers the gutters */
-.main { --main-px: 26px; padding: 22px var(--main-px); min-width: 0; }
+.main { --main-px: 26px; --main-py: 22px; padding: var(--main-py) var(--main-px); min-width: 0; }
 /* Module header (title, description, actions): stays at the top while the page scrolls underneath. It is one shared class, so every module
    behaves the same. The negative margin-top and padding-top cancel out, so nothing moves at rest; when stuck, the title keeps 8px of air. */
 .page-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap;
   position: sticky; top: 0; z-index: 20; background: var(--bg);
-  margin: -8px calc(var(--main-px) * -1) 4px; padding: 8px var(--main-px) 12px; }
+  margin: calc(var(--main-py) * -1) calc(var(--main-px) * -1) 0; padding: var(--main-py) var(--main-px) 16px; }
+/* Module footer row (pagination, or the Dashboard's action row): pinned to the bottom of the viewport while the page scrolls, mirroring the sticky header.
+   It stays in the normal flow, so at the end of the page it sits flush at the bottom and never covers the last rows. Like the header it reaches into the
+   page padding (opaque, with a top line) and sits above content but below dialogs, drawers and toasts. */
+.module-footer { position: sticky; bottom: 0; z-index: 15; background: var(--bg); border-top: 1px solid var(--line);
+  margin: 12px calc(var(--main-px) * -1) calc(var(--main-py) * -1); padding: 10px var(--main-px); }
+
 /* A module header that has a tab row (Settings): the tabs join the sticky block, so title and tabs stay together. The 16px gap between them
    and the 16px below the tabs are the same as before, so nothing moves at rest. */
-.page-head.with-tabs { flex-direction: column; align-items: stretch; flex-wrap: nowrap; gap: 16px; padding-bottom: 0; margin-bottom: 16px; }
+.page-head.with-tabs { flex-direction: column; align-items: stretch; flex-wrap: nowrap; gap: 16px; padding-bottom: 16px; margin-bottom: 0; }
 .page-head.with-tabs .tabs { margin-bottom: 0; }
 
 .card { background: var(--white); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px; box-shadow: var(--shadow); }
@@ -52,9 +58,21 @@ label.inline { display: flex; align-items: center; gap: 8px; color: var(--ink); 
 .sim-tag { background: #fff0b8; color: #6b4e00; border: 1px dashed #c9a227; padding: 1px 7px; border-radius: 6px; font-size: 10px; font-weight: 800; letter-spacing: .05em; }
 .banner { padding: 9px 14px; border-radius: 8px; font-size: 13px; } .banner.slim { padding: 5px 12px; font-size: 12.5px; line-height: 1.35; margin-bottom: 8px; } .banner.warn { background: #fff0b8; color: #5f4500; border: 1px dashed #c9a227; } .banner.err { background: var(--redbg); color: var(--red); } .banner.ok { background: var(--greenbg); color: var(--green); }
 
-table { width: 100%; border-collapse: collapse; } th { text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); padding: 8px 10px; border-bottom: 1px solid var(--line); }
+table { width: 100%; border-collapse: collapse; } th { text-align: left; font-size: 15px; font-weight: 700; color: var(--ink); padding: 8px 10px; border-bottom: 1px solid var(--line); }
 td { padding: 10px; border-bottom: 1px solid var(--line); vertical-align: top; } tr.click { cursor: pointer; } tr.click:hover td { background: var(--bg); }
 .table-wrap { overflow-x: auto; }
+/* Column headers of list tables stay under the sticky module header while the page scrolls (--page-head-h is that header's height, kept by
+   components/StickyTables.tsx). For a header to stick, its card must not be a scroll container, so these cards clip instead of scrolling; a table
+   wider than its card gets .scroll-x and scrolls sideways as before (then its headers scroll with it). */
+.table-wrap.sticky-head { overflow-x: clip; }
+.table-wrap.sticky-head.scroll-x { overflow-x: auto; }
+/* A card's top padding would vanish once its headers stick, making the header row look shorter while scrolling; it moves into the header cells
+   (16px card padding + 8px cell padding = 24px, the same at rest) so the stuck header keeps exactly the height it has at rest. */
+.card.table-wrap.sticky-head { padding-top: 0; border-top-width: 0; }
+.card.table-wrap.sticky-head thead th:first-child { border-top-left-radius: var(--radius); } .card.table-wrap.sticky-head thead th:last-child { border-top-right-radius: var(--radius); }
+.card.table-wrap.sticky-head thead th { padding-top: 24px; }
+.table-wrap.sticky-head:not(.scroll-x) thead th { position: sticky; top: var(--page-head-h, 0px); z-index: 2; background: var(--white); box-shadow: inset 0 -1px 0 var(--line); }
+.card.table-wrap.sticky-head:not(.scroll-x) thead th { box-shadow: inset 0 1px 0 var(--line), inset 0 -1px 0 var(--line); }
 
 .panel-sec { padding: 14px; border-bottom: 1px solid var(--line); }
 .chips { display: flex; gap: 6px; flex-wrap: wrap; } .chip { border: 1px solid var(--line); background: var(--white); border-radius: 999px; padding: 3px 10px; font-size: 12px; cursor: pointer; } .chip.on { background: var(--blue); color: #fff; border-color: var(--blue); }
@@ -83,7 +101,7 @@ td { padding: 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
 @media (max-width: 1100px) { .qb { grid-template-columns: 1fr; } .qb .side { position: static; } }
 @media (max-width: 760px) {
   .shell { grid-template-columns: 1fr; } .nav { position: static; height: auto; flex-direction: row; flex-wrap: wrap; padding: 8px; } .nav .brand, .nav .who, .nav .spacer { display: none; }
-  .main { --main-px: 16px; padding: 14px var(--main-px); }
+  .main { --main-px: 16px; --main-py: 14px; padding: var(--main-py) var(--main-px); }
   /* keep the sticky header compact: one scrollable row of tabs instead of several wrapped rows */
   .page-head.with-tabs .tabs { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; } .page-head.with-tabs .tabs::-webkit-scrollbar { display: none; } .page-head.with-tabs .tab { flex: none; white-space: nowrap; }
 }
@@ -195,17 +213,36 @@ fieldset.card { margin: 0; border: 1px solid var(--line); } fieldset legend { pa
 .composer-chips { padding: 6px 12px 0; background: var(--wa-header); }
 
 /* customer details */
-.inbox > section.inbox-details { overflow-y: auto; overscroll-behavior: contain; border-right: 0; }
-.details-head { display: flex; justify-content: space-between; align-items: center; padding: 14px 16px; background: var(--wa-header); border-bottom: 1px solid var(--wa-line); position: sticky; top: 0; z-index: 1; }
+.inbox > section.inbox-details { overflow: hidden; border-right: 0; }
+.details-head { display: flex; justify-content: space-between; align-items: center; padding: 14px 16px; background: var(--wa-header); border-bottom: 1px solid var(--wa-line); flex: none; }
 .inbox-details .panel-sec { padding: 14px 16px; }
 
-/* details: closed by default; a slide-over opened from the chat header (the chat keeps the full width when it is closed) */
+/* details: closed by default (the chat keeps the full width). Opened from the chat header it docks beside the chat on wide screens, so the
+   message box stays usable; on tablets it is a slide-over; on phones it is a full-screen view. */
 .inbox > section.inbox-details { display: none; }
-.inbox.details-open > section.inbox-details { display: flex; position: absolute; top: 0; right: 0; bottom: 0; width: min(360px, 100%); z-index: 5; border-left: 1px solid var(--wa-line); box-shadow: -8px 0 24px rgba(11, 20, 26, .16); }
-@media (max-width: 1100px) { .inbox { grid-template-columns: 300px minmax(0, 1fr); } }
+.inbox.details-open { grid-template-columns: 320px minmax(0, 1fr) 360px; }
+.inbox.details-open > section.inbox-details { display: flex; border-left: 1px solid var(--wa-line); }
+@media (max-width: 1100px) {
+  .inbox, .inbox.details-open { grid-template-columns: 300px minmax(0, 1fr); }
+  .inbox.details-open > section.inbox-details { position: absolute; top: 0; right: 0; bottom: 0; width: min(360px, 100%); z-index: 5; box-shadow: -8px 0 24px rgba(11, 20, 26, .16); }
+}
+/* customer details panel: tabs, next step, quote cards, notes */
+.details-tabs { margin: 0; padding: 0 8px; flex: none; flex-wrap: nowrap; overflow-x: auto; background: var(--wa-header); scrollbar-width: none; } .details-tabs::-webkit-scrollbar { display: none; }
+.details-tabs .tab { padding: 10px 12px; white-space: nowrap; flex: none; }
+.details-body { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+.details-pad { padding: 14px 16px; }
+.nextstep { border-radius: 8px; padding: 9px 12px; font-size: 13px; line-height: 1.4; background: var(--bluebg); color: #1c3f94; }
+.nextstep.urgent { background: var(--redbg); color: var(--red); } .nextstep.good { background: var(--greenbg); color: #14633d; } .nextstep.quiet { background: var(--bg); color: var(--muted); }
+.nextstep-label { display: block; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; opacity: .8; margin-bottom: 2px; }
+.kv { display: grid; gap: 2px; }
+.quote-card { border: 1px solid var(--wa-line); border-radius: 10px; padding: 10px 12px; display: grid; gap: 6px; background: #fff; }
+.followup { display: grid; gap: 4px; border-top: 1px dashed var(--wa-line); padding-top: 6px; } .followup input { min-width: 0; flex: 1; padding: 5px 8px; }
+.note { background: var(--amberbg); border-radius: 8px; padding: 8px 10px; font-size: 13px; }
+
 /* phone: one pane at a time (list or chat); only the thread scrolls, so the composer is always in reach */
 @media (max-width: 760px) {
-  .inbox { grid-template-columns: minmax(0, 1fr); height: calc(100dvh - 130px); min-height: 480px; }
+  .inbox, .inbox.details-open { grid-template-columns: minmax(0, 1fr); height: calc(100dvh - 130px); min-height: 480px; }
+  .inbox.details-open > section.inbox-details { inset: 0; width: 100%; box-shadow: none; border-left: 0; }
   .inbox > section.inbox-chat { display: none; }
   .inbox.chat-open > section.inbox-list { display: none; }
   .inbox.chat-open > section.inbox-chat { display: flex; }

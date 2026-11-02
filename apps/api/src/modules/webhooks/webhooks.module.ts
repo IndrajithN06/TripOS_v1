@@ -9,6 +9,7 @@ import { accountAppKey, AppKey } from '../../providers/whatsapp/app-identity';
 import { metaApps } from '../../providers/whatsapp/meta-apps';
 import { WaEvent, WHATSAPP, WhatsAppProvider } from '../../providers/whatsapp/whatsapp';
 import { WhatsappAccountService } from '../whatsapp/whatsapp-account.service';
+import { STATUS_AFTER_AGENCY_REPLY, STATUS_AFTER_CUSTOMER_MESSAGE } from '../inbox/conversation-workflow';
 
 const RANK: Record<string, number> = { queued: 0, submitted: 1, sent: 2, delivered: 3, read: 4 };
 const MEDIA_MIME_ALLOW = /^(image\/(jpeg|png|webp)|application\/pdf|audio\/(ogg|mpeg|mp4|amr|aac))$/;
@@ -99,7 +100,7 @@ export class InboundService {
       const msg = await tx.message.create({
         data: { agencyId, conversationId: conv.id, providerMessageId: e.providerMessageId, direction: 'inbound', type: e.type, text: e.text ?? null, status: 'received', simulated: this.wa.simulated, createdAt: e.timestamp },
       });
-      await tx.conversation.update({ where: { id: conv.id }, data: { unreadCount: { increment: 1 }, lastMessageAt: e.timestamp, lastInboundAt: e.timestamp, status: conv.status === 'closed' ? 'open' : conv.status } });
+      await tx.conversation.update({ where: { id: conv.id }, data: { unreadCount: { increment: 1 }, lastMessageAt: e.timestamp, lastInboundAt: e.timestamp, status: STATUS_AFTER_CUSTOMER_MESSAGE } });
       return { dup: false as const, msgId: msg.id };
     });
     if (result.dup) return 'duplicate' as const;
@@ -143,6 +144,8 @@ export class InboundService {
         data: { agencyId, conversationId: conv.id, providerMessageId: e.providerMessageId, direction: 'outbound', type: e.type, text: e.text ?? null, status: 'sent', simulated: false, sentByUserId: null, createdAt: e.timestamp },
       });
       if (e.timestamp > conv.lastMessageAt) await tx.conversation.update({ where: { id: conv.id }, data: { lastMessageAt: e.timestamp } });
+      // The business answered from the WhatsApp Business app: the chat now waits for the customer, unless the customer wrote after this message.
+      await tx.conversation.updateMany({ where: { id: conv.id, agencyId, OR: [{ lastInboundAt: null }, { lastInboundAt: { lte: e.timestamp } }] }, data: { status: STATUS_AFTER_AGENCY_REPLY } });
       return { processed: 1, duplicates: 0, ignored: 0 };
     });
   }
