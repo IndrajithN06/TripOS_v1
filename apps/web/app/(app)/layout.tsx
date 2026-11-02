@@ -48,7 +48,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
         </nav>
         <main className="main">
           {me.agency?.whatsapp && ['degraded', 'disconnected'].includes(me.agency.whatsapp.status) && (
-            <div className="banner err" role="alert" style={{ marginBottom: 14 }}>
+            <div className="banner err slim" role="alert">
               <strong>WhatsApp is {me.agency.whatsapp.status === 'degraded' ? 'having problems' : 'disconnected'}.</strong> Messages may not send or arrive. {me.agency.whatsapp.reason}{' '}
               {me.user.role === 'AGENCY_ADMIN' ? <Link href="/settings">Open Settings → WhatsApp</Link> : 'Please tell your agency admin.'}
             </div>

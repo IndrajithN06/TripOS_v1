@@ -4,7 +4,6 @@ import { audit } from '../../common/audit';
 import { AssetService } from '../../common/assets';
 import { agencyOf, CurrentUser, parse, Principal, Roles } from '../../common/auth';
 import { Db, Tx } from '../../db/db.service';
-import { AiService } from '../ai/ai.service';
 import { OutboundService } from './outbound.service';
 import { outstationDays } from '../quotes/trip-duration';
 import { textSendBlock, windowState } from './service-window';
@@ -134,7 +133,7 @@ const sendSchema = z.discriminatedUnion('type', [
 @Roles('AGENCY_ADMIN', 'SALES')
 @Controller('inbox/conversations')
 export class InboxController {
-  constructor(private readonly svc: InboxService, private readonly db: Db, private readonly outbound: OutboundService, private readonly ai: AiService, private readonly templates: TemplatesService, private readonly quotes: QuotesService) {}
+  constructor(private readonly svc: InboxService, private readonly db: Db, private readonly outbound: OutboundService, private readonly templates: TemplatesService, private readonly quotes: QuotesService) {}
 
   @Get()
   list(@CurrentUser() p: Principal, @Query() q: Record<string, string>) {
@@ -276,16 +275,5 @@ export class InboxController {
       await audit(tx, { agencyId, actorUserId: p.userId, action: 'conversation.updated', entityType: 'conversation', entityId: id, metadata: b });
       return { id: c.id, status: c.status, assignedUserId: c.assignedUserId };
     });
-  }
-
-  // ---- AI assistance (drafts only; nothing is sent or priced by AI) ----
-  @Post(':id/ai/:feature')
-  async aiRun(@CurrentUser() p: Principal, @Param('id', ParseUUIDPipe) id: string, @Param('feature') feature: string, @Body() body: unknown) {
-    const f = parse(z.enum(['summary', 'reply-suggestions', 'extract', 'quote-draft', 'negotiation']), feature);
-    const b = parse(z.object({ quoteId: z.string().uuid().optional(), customerMessage: z.string().max(1000).optional() }), body ?? {});
-    const agencyId = agencyOf(p);
-    await this.db.tenant(agencyId, (tx) => this.svc.getConversation(tx, p, agencyId, id));
-    const map = { summary: 'summary', 'reply-suggestions': 'reply', extract: 'extract', 'quote-draft': 'quote_draft', negotiation: 'negotiation' } as const;
-    return this.ai.run(p, agencyId, map[f], id, b);
   }
 }

@@ -10,9 +10,9 @@ A multi-tenant SaaS in which a travel agency receives a WhatsApp enquiry, prepar
 ## Roles
 | Capability | Super Admin | Agency Admin | Sales |
 |---|---|---|---|
-| Create/suspend agencies, invite first admin, usage/errors, AI kill switch | yes | no | no |
+| Create/suspend agencies, invite first admin, usage/errors | yes | no | no |
 | Agency chats & quotes | no (explicit, time-limited, audited grant only; metadata) | yes | yes (policy: all, or assigned/own) |
-| Users, branding, WhatsApp connection, templates, tax, AI toggle | no | yes | no |
+| Users, branding, WhatsApp connection, templates, tax | no | yes | no |
 | Vehicle types, rates, photos | no | manage | read/select |
 | Create/edit/send quotes | no | yes | yes (rate overrides/discounts gated per user) |
 | Dashboard | platform usage | full | limited (own scope, no pipeline value) |
@@ -20,10 +20,10 @@ A multi-tenant SaaS in which a travel agency receives a WhatsApp enquiry, prepar
 Enforced server-side (guards + tenant RLS); the UI only mirrors it.
 
 ## Screens (all implemented)
-Dashboard, WhatsApp Inbox with in-chat Quote Builder, Quotes (list, detail, version history, diff), Vehicle Types (+ multi-photo manager), Settings (branding, team, WhatsApp, templates, quote/tax/AI, audit), Super Admin console.
+Dashboard, WhatsApp Inbox with in-chat Quote Builder, Quotes (list, detail, version history, diff), Vehicle Types (+ multi-photo manager), Settings (branding, team, WhatsApp, templates, quote/tax, audit), Super Admin console.
 
 ## Quote rules
-- Totals are computed only by the backend pricing library (`packages/pricing`), in decimals. AI never prices.
+- Totals are computed only by the backend pricing library (`packages/pricing`), in decimals.
 - Local packages (two configurable slabs + extra hour/km) and outstation (billable km = max(actual, days x min km/day); optional per-day mode in the API; driver batta/day).
 - Extra named charges (taxable flag), discount (amount or %), tax (agency-configured rate; exclusive or inclusive).
 - Order: lines, subtotal, discount, tax on (taxable lines minus discount), total. Rounding half-up to 2 dp per line.

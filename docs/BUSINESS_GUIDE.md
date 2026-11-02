@@ -14,11 +14,11 @@ Each agency is an independent tenant with its own users, branding, vehicles, rat
 ## 2. Who does what
 | Role | Who | Can do |
 |---|---|---|
-| **Super Admin** | TripOS platform owner | Create, suspend and reactivate agencies; invite an agency's first admin; see per-agency usage and failed jobs; switch AI off platform-wide. **Cannot** read agency chats or quotes by default. Cross-agency support access needs a written reason, expires within 5-60 minutes, and is audited. |
+| **Super Admin** | TripOS platform owner | Create, suspend and reactivate agencies; invite an agency's first admin; see per-agency usage and failed jobs. **Cannot** read agency chats or quotes by default. Cross-agency support access needs a written reason, expires within 5-60 minutes, and is audited. |
 | **Agency Admin** | Agency owner or manager | Everything inside their agency: team, branding, vehicles and rates, WhatsApp connection, templates, tax and quote settings, all chats and quotes, full dashboard. |
 | **Sales** | Agency staff | Handle chats, create/edit/send quotes, add notes, follow up. Can view vehicles but not change them. Cannot see settings, other agencies or integration secrets. Changing rates or applying discounts is allowed only if the admin has enabled "can change rates" for that person. |
 
-Agency admins can choose whether Sales see **all** agency chats and quotes or **only their own / assigned** ones (Settings → Quotes, tax & AI).
+Agency admins can choose whether Sales see **all** agency chats and quotes or **only their own / assigned** ones (Settings → Quotes & tax).
 
 ## 3. Setting up an agency (first day)
 1. **Super Admin** creates the agency (name, slug, first admin's name and email). The admin receives an invitation link to set a password (valid 72 hours, single use).
@@ -27,7 +27,7 @@ Agency admins can choose whether Sales see **all** agency chats and quotes or **
    - adds **vehicle types** with the full rate card and photos (see §4);
    - invites sales team members (Settings → Team). A lost or expired link can be re-issued with **Resend invite**; **Reset password** issues a fresh link to someone already active;
    - connects the agency's WhatsApp Business number (Settings → WhatsApp);
-   - sets tax (rate, on/off, inclusive or exclusive) and quote validity (Settings → Quotes, tax & AI);
+   - sets tax (rate, on/off, inclusive or exclusive) and quote validity (Settings → Quotes & tax);
    - optionally drafts WhatsApp message templates.
 
 ## 4. Vehicle types and rate cards
@@ -52,7 +52,7 @@ Nothing is hard-coded: every number is the agency's own. Changing a rate affects
 
 ## 5. Daily workflow
 ### 5.1 A new enquiry
-A customer messages the agency's WhatsApp number. TripOS finds or creates the customer and conversation (by phone number), stores the message, shows an unread badge, and optionally lets AI summarise or extract trip details.
+A customer messages the agency's WhatsApp number. TripOS finds or creates the customer and conversation (by phone number), stores the message, shows an unread badge.
 
 ### 5.2 Building a quote (in the chat)
 1. Open the conversation, click **New quote**.
@@ -96,10 +96,7 @@ billable km = max(750, 3 x 300) = 900 → 900 x 20 = 18,000 + batta 3 x 800 = 2,
 - **Meta charges per message** (since 1 October 2026 this includes in-window replies, after 1,000 free service messages per number per month, plus GST in India). A quote sent as text + PDF + photos is several messages. See `COSTS_AND_PRICING.md`.
 - In the current local environment every message is labelled **SIMULATED**; nothing reaches real WhatsApp.
 
-## 8. AI assistance (optional)
-Summaries, trip-detail extraction, reply suggestions, quote drafting and negotiation suggestions. **Rules:** AI only proposes drafts; staff review everything; AI never sets prices, applies discounts or sends anything. Customer messages are treated as untrusted text. If AI is off or unavailable, everything else keeps working. Agencies have a monthly call limit and can switch AI off; the platform owner has a kill switch.
-
-## 9. The dashboard
+## 8. The dashboard
 Choose 7, 30 or 90 days. Figures are consistent with the underlying records.
 | Measure | Definition |
 |---|---|
@@ -116,16 +113,16 @@ Choose 7, 30 or 90 days. Figures are consistent with the underlying records.
 | Heatmap | Inbound messages by weekday and hour (agency time). |
 Each change is shown against the previous period of equal length. Sales users see only their own quotes. Alerts appear for failed sends and for messages that failed and were not followed up.
 
-## 10. Data, privacy and retention
+## 9. Data, privacy and retention
 - Every record carries its agency; isolation is enforced by the application **and** the database.
 - Provider credentials are stored encrypted and are never shown again.
 - Sensitive actions (rate changes, user changes, discounts, sends, status changes, support access) are written to an audit log.
 - Retention and consent policy has **not** been defined; nothing is auto-deleted. Decide before launch (see `DECISIONS_AND_ASSUMPTIONS.md`).
 
-## 11. Glossary
+## 10. Glossary
 **Tenant/agency:** one customer company of TripOS. **Vehicle type:** a category of vehicle quoted (not a specific car). **Rate card:** an agency's prices for a vehicle type. **Quote version:** an immutable-once-sent snapshot of a quotation. **Batta:** driver daily allowance. **WABA:** WhatsApp Business Account. **Template:** a pre-approved WhatsApp message. **Simulator:** the local stand-in for WhatsApp used before Meta approval.
 
-## 12. FAQ
+## 11. FAQ
 - *Can a sent quote be edited?* No. Requote to create a new version.
 - *Why can't I send a normal message?* The 24-hour window closed; use an approved template.
 - *Why can't Sales change the price?* The admin controls that per person (Settings → Team).

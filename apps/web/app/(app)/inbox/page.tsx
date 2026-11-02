@@ -6,12 +6,13 @@ import { Empty, ErrorBox, Loading, SimTag, StatusBadge, errMsg, useAction, useMe
 import { QuoteBuilder } from '@/components/QuoteBuilder';
 import { InboxTemplateModal } from '@/components/InboxTemplateModal';
 import { StarterPicker } from '@/components/StarterPicker';
+import { Composer } from '@/components/Composer';
+import { ImageLightbox } from '@/components/ImageLightbox';
 import { composerState } from '@/lib/starter-send';
 import { MessageTicks } from '@/components/MessageTicks';
 import { ConfirmDeleteQuote, DeletableQuote } from '@/components/ConfirmDeleteQuote';
 import { canDeleteQuote } from '@/lib/quote-delete';
-import { dayLabel, initials } from '@/lib/inbox-view';
-import { extractToPrefill } from '@/lib/quote-prefill';
+import { chatStatus, dayLabel, initials } from '@/lib/inbox-view';
 
 const POLL_MS = 4000; // V1 uses short polling instead of SSE/WebSockets (see docs/DECISIONS_AND_ASSUMPTIONS.md)
 
@@ -63,8 +64,8 @@ function Conversation({ id, tick, onChanged, onBack, detailsOpen, onToggleDetail
   const msgs = useApi<any>(`/inbox/conversations/${id}/messages?limit=100`, [tick]);
   const users = useApi<any[]>(me.user.role === 'AGENCY_ADMIN' ? '/agency/users' : null);
   const [text, setText] = useState(''), [builder, setBuilder] = useState<{ quoteId?: string; prefill?: any } | null>(null), [sending, setSending] = useState(false);
-  const [note, setNote] = useState(''), [ai, setAi] = useState<any>(null), [aiBusy, setAiBusy] = useState(false), [aiErr, setAiErr] = useState('');
-  const [tplModal, setTplModal] = useState(false), [starterOpen, setStarterOpen] = useState(false), [delQuote, setDelQuote] = useState<DeletableQuote | null>(null);
+  const [note, setNote] = useState('');
+  const [tplModal, setTplModal] = useState(false), [starterOpen, setStarterOpen] = useState(false), [lightbox, setLightbox] = useState<string | null>(null), [delQuote, setDelQuote] = useState<DeletableQuote | null>(null);
   const bottom = useRef<HTMLDivElement>(null), lastCount = useRef(0);
 
   useEffect(() => { void api(`/inbox/conversations/${id}/read`, { method: 'POST' }).then(onChanged).catch(() => undefined); }, [id]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -82,14 +83,10 @@ function Conversation({ id, tick, onChanged, onBack, detailsOpen, onToggleDetail
     else if (r && !r.ok) setText(text); // keep the draft so nothing is lost; failed bubble shows retry
     reload();
   }
-  async function runAi(feature: string, body: object = {}) {
-    setAiBusy(true); setAiErr('');
-    try { setAi(await api(`/inbox/conversations/${id}/ai/${feature}`, { body })); if (feature === 'summary') void detail.reload(); }
-    catch (e) { setAi(null); setAiErr(errMsg(e)); }
-    setAiBusy(false);
-  }
-
-  const composer = composerState({ sendBlock: d?.sendBlock, text, sending });
+  // The page-level banner (app layout) already says "disconnected" for the agency's account; the composer must not repeat it.
+  const disconnectedBannerVisible = me.agency?.whatsapp?.status === 'disconnected';
+  const composer = composerState({ sendBlock: d?.sendBlock, text, sending, disconnectedBannerVisible });
+  const status = d ? chatStatus({ sendBlockCode: d.sendBlock?.code, windowOpen: d.windowOpen }) : null;
   if (detail.error) return <section className="inbox-chat"><ErrorBox e={detail.error} retry={detail.reload} /></section>;
   if (!d) return <section className="inbox-chat"><Loading /></section>;
 
@@ -101,8 +98,7 @@ function Conversation({ id, tick, onChanged, onBack, detailsOpen, onToggleDetail
           <Avatar name={d.customer.name} />
           <div className="chat-who"><strong>{d.customer.name}</strong><span className="muted small">{d.customer.phone}</span></div>
           <div className="chat-actions">
-            <span className={`badge ${d.windowOpen ? 'green' : 'amber'}`} title="Free-form replies are allowed for 24h after the customer's last message">{d.windowOpen ? '24h window open' : 'Window closed — template only'}</span>
-            <button className="btn primary sm" onClick={() => setBuilder({})}>＋ New quote</button>
+            {status && <span className={`badge ${status.tone}`} title={status.title} data-testid="chat-status" data-kind={status.kind}>{status.label}</span>}
             <button className="btn sm details-btn" onClick={onToggleDetails} aria-expanded={detailsOpen} aria-label="Customer details">ⓘ Details</button>
           </div>
         </div>
@@ -115,7 +111,7 @@ function Conversation({ id, tick, onChanged, onBack, detailsOpen, onToggleDetail
               <Fragment key={m.id}>
                 {newDay && <div className="day-sep"><span>{day}</span></div>}
                 <div className={`bubble ${out ? 'out' : ''}`}>
-                  {m.media?.mimeType?.startsWith('image/') && <a href={m.media.url} target="_blank" rel="noreferrer"><img src={m.media.url} alt="Attachment" /></a>}
+                  {m.media?.mimeType?.startsWith('image/') && <button type="button" className="img-btn" onClick={() => setLightbox(m.media.url)} aria-label="View image larger"><img src={m.media.url} alt="Attachment" loading="lazy" /></button>}
                   {m.media && !m.media.mimeType.startsWith('image/') && <a className="att" href={m.media.url} target="_blank" rel="noreferrer"><span aria-hidden="true">📎</span><span>{m.type === 'document' ? 'Document' : 'Attachment'} <span className="muted small">({m.media.mimeType})</span></span></a>}
                   {m.type === 'template' && <div className="tpl-tag">Template</div>}
                   {m.text && <div className="txt">{m.text}</div>}
@@ -138,21 +134,11 @@ function Conversation({ id, tick, onChanged, onBack, detailsOpen, onToggleDetail
           })}
           <div ref={bottom} />
         </div>
-        <div className="composer">
-          {composer.notice && <div className={`banner ${d.sendBlock ? 'warn' : 'info'} small row between`} role="status" data-testid="composer-notice"><span>{composer.notice}</span>{composer.suggestMetaTemplate && <button className="btn sm" onClick={() => setTplModal(true)}>Use an approved template</button>}</div>}
-          {ai?.output?.replies && <div className="chips" aria-label="Suggested replies (drafts)">{ai.output.replies.map((r: string, i: number) => <button key={i} className="chip" onClick={() => setText(r)} title="Click to edit before sending">💡 {r.slice(0, 70)}…</button>)}</div>}
-          {ai?.output?.reply && <div className="chips"><button className="chip" onClick={() => setText(ai.output.reply)}>💡 Use suggested reply</button></div>}
-          <textarea aria-label="Message" rows={2} placeholder={composer.canType ? 'Type a message…' : 'Sending is not available right now — see the note above'} disabled={!composer.canType} value={text} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && composer.canSend) void sendText(); }} />
-          <div className="composer-actions">
-            <div className="row">
-              <button className="btn sm" onClick={() => setTplModal(true)}>📋 Templates</button>
-              <button className="btn sm" onClick={() => setStarterOpen(true)} title="Ready-made wording you fill in and edit (not WhatsApp templates)">✨ Starters</button>
-              <button className="btn sm" onClick={() => runAi('reply-suggestions')} disabled={aiBusy}>💡 Suggest replies</button>
-            </div>
-            <button className="btn primary" disabled={!composer.canSend} onClick={sendText}>{sending ? 'Sending…' : 'Send'}</button>
-          </div>
-          {d.chargesNotice && <div className="small muted" data-testid="charges-notice">{d.chargesNotice}</div>}
-        </div>
+        <Composer
+          state={composer} text={text} onText={setText} onSend={sendText} sending={sending} chargesNotice={d.chargesNotice}
+          onTemplates={() => setTplModal(true)} onStarters={() => setStarterOpen(true)} onQuote={() => setBuilder({})}
+          onUseApprovedTemplate={() => setTplModal(true)}
+        />
       </section>
 
       <section className="inbox-details" aria-label="Customer details">
@@ -176,27 +162,6 @@ function Conversation({ id, tick, onChanged, onBack, detailsOpen, onToggleDetail
         </div>
 
         <div className="panel-sec stack">
-          <div className="row between"><h3 style={{ margin: 0 }}>AI assistant</h3><span className="badge gray">draft only</span></div>
-          {!me.environment.aiAvailable && <div className="small muted">AI is not configured. Everything else works normally.</div>}
-          <div className="row">
-            <button className="btn sm" disabled={aiBusy} onClick={() => runAi('summary')}>Summarise</button>
-            <button className="btn sm" disabled={aiBusy} onClick={() => runAi('extract')}>Extract trip</button>
-            <button className="btn sm" disabled={aiBusy || d.quotes.length === 0} onClick={() => runAi('negotiation', { quoteId: d.quotes[0]?.id })}>Negotiation</button>
-          </div>
-          {aiBusy && <div className="small muted">Thinking…</div>}
-          {aiErr && <div className="banner warn small">{aiErr}</div>}
-          {d.summary && <div className="small"><strong>Summary</strong> <span className="muted">({d.summaryAt && new Date(d.summaryAt).toLocaleTimeString()})</span><br />{d.summary}</div>}
-          {ai?.output?.fields && (
-            <div className="small stack">
-              <strong>Extracted (please verify){ai.simulated && <> <SimTag /></>}</strong>
-              {Object.entries(ai.output.fields).map(([k, v]) => <div key={k} className="row between"><span className="muted">{k}</span><span>{v === null ? <em className="muted">unknown</em> : String(v)}</span></div>)}
-              <button className="btn sm blue" onClick={() => setBuilder({ prefill: extractToPrefill(ai.output) })}>Start quote with these (editable)</button>
-            </div>
-          )}
-          {ai?.output?.suggestedDiscountPercent != null && <div className="small banner warn">Suggested discount: {ai.output.suggestedDiscountPercent}% — not applied. Staff must decide.</div>}
-        </div>
-
-        <div className="panel-sec stack">
           <h3>Internal notes <span className="muted small">(never sent to the customer)</span></h3>
           {d.notes.map((n: any) => <div key={n.id} className="small" style={{ background: 'var(--amberbg)', padding: 8, borderRadius: 8 }}>{n.text}<div className="muted">{n.author} · {fmtRelative(n.createdAt)}</div></div>)}
           <div className="row" style={{ flexWrap: 'nowrap' }}><input aria-label="Add note" value={note} onChange={(e) => setNote(e.target.value)} placeholder="Add a note…" /><button className="btn sm" onClick={() => note.trim() && run(() => api(`/inbox/conversations/${id}/notes`, { body: { text: note } })).then(() => { setNote(''); reload(); })}>Add</button></div>
@@ -205,10 +170,11 @@ function Conversation({ id, tick, onChanged, onBack, detailsOpen, onToggleDetail
         {me.environment.whatsappSimulated && <SimulatorPanel onDone={reload} />}
       </section>
 
+      {lightbox && <ImageLightbox url={lightbox} onClose={() => setLightbox(null)} />}
       {delQuote && <ConfirmDeleteQuote quote={delQuote} onClose={() => setDelQuote(null)} onDeleted={() => { setDelQuote(null); reload(); }} />}
       {starterOpen && <StarterPicker conversationId={id} onInsert={setText} onUseApprovedTemplate={() => setTplModal(true)} onClose={() => setStarterOpen(false)} />}
       {tplModal && <InboxTemplateModal conversationId={id} quotes={d.quotes} windowOpen={d.windowOpen} onClose={() => setTplModal(false)} onSent={reload} />}
-      {builder && <QuoteBuilder conversationId={id} quoteId={builder.quoteId} prefill={builder.prefill} onClose={() => { setBuilder(null); reload(); }} onChanged={reload} />}
+      {builder && <QuoteBuilder conversationId={id} quoteId={builder.quoteId} onClose={() => { setBuilder(null); reload(); }} onChanged={reload} />}
     </>
   );
 }
@@ -230,7 +196,7 @@ function SimulatorPanel({ onDone }: { onDone: () => void }) {
       </div>
       <div className="small"><strong>Failure injection</strong></div>
       <div className="row"><button className="btn sm" onClick={() => fail('image')}>Fail next image</button><button className="btn sm" onClick={() => fail('document')}>Fail next PDF</button><button className="btn sm" onClick={() => fail('text')}>Fail next text</button></div>
-      <div className="row"><button className="btn sm" onClick={() => run(() => api('/dev/simulator/ai-fail-next', { body: {} }), 'Next AI call will fail')}>Fail next AI call</button><button className="btn sm" onClick={() => run(() => api('/dev/jobs/tick', { body: {} }), 'Job queue processed').then(onDone)}>Run job queue</button></div>
+      <div className="row"><button className="btn sm" onClick={() => run(() => api('/dev/jobs/tick', { body: {} }), 'Job queue processed').then(onDone)}>Run job queue</button></div>
     </div>
   );
 }

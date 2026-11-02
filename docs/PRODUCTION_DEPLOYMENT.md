@@ -10,14 +10,13 @@
 | Hosting for 2 processes | API (Node 22, runs the in-process worker) and Web (Next.js). Keep **one** API instance running the worker or accept that jobs are claimed with `SKIP LOCKED` (safe to scale). |
 | Domain + HTTPS | App and API on the same site (e.g. `app.` / `api.`). Web proxies `/api/*` to the API via `API_INTERNAL_URL`. |
 | Meta WhatsApp Business Platform | Meta developer app, **business verification**, WABA + phone number per agency (Embedded Signup), webhook subscription, message-template approvals. Lead times and review outcomes are Meta's. Alternatively a BSP (open decision). |
-| OpenAI API key (optional) | `AI_PROVIDER=disabled` runs the product without AI. |
 | Email provider (Resend) | Verified sending domain for invitations. |
 | Secrets manager | Holds everything in `.env.production.example`. |
 
-Costs depend on volume and provider pricing (Meta per-conversation fees, OpenAI tokens, managed Postgres, storage/egress, hosting, email). Obtain current price sheets; none are assumed here.
+Costs depend on volume and provider pricing (Meta per-conversation fees, managed Postgres, storage/egress, hosting, email). Obtain current price sheets; none are assumed here.
 
 ## Environment
-Copy `apps/api/.env.production.example` into your secret manager. Startup **fails with a precise list** if a secret is a development default, storage is `local`, WhatsApp is `simulator`, AI is `mock`, or URLs are not https. Web needs only `API_INTERNAL_URL`. No secret may be placed in `NEXT_PUBLIC_*`.
+Copy `apps/api/.env.production.example` into your secret manager. Startup **fails with a precise list** if a secret is a development default, storage is `local`, WhatsApp is `simulator`, or URLs are not https. Web needs only `API_INTERNAL_URL`. No secret may be placed in `NEXT_PUBLIC_*`.
 
 **WhatsApp Embedded Signup (optional, off by default).** Leave the `WHATSAPP_SIGNUP_*` lines commented out unless you are enabling it. Setting *any* of them makes startup require all three (`WHATSAPP_SIGNUP_APP_ID`, `WHATSAPP_SIGNUP_APP_SECRET`, `WHATSAPP_SIGNUP_VERIFY_TOKEN`) **and `WHATSAPP_APP_ID` (the original Cloud API app)**, and `WHATSAPP_EMBEDDED_SIGNUP_CONFIG_ID` as well once `WHATSAPP_EMBEDDED_SIGNUP_ENABLED=true`. Startup fails with a precise list if they are inconsistent (see `docs/WHATSAPP_EMBEDDED_SIGNUP.md`).
 
@@ -41,7 +40,7 @@ Copy `apps/api/.env.production.example` into your secret manager. Startup **fail
 Enable automated daily snapshots + point-in-time recovery; store bucket versioning. **Perform a restore test** into a scratch database before launch and record the result.
 
 ## Monitoring (to wire up)
-Error tracking (e.g. Sentry), uptime on `/health/ready`, alerts on failed `Job` rows (visible in the Super Admin console), webhook 4xx/5xx rate, AI spend (`AiUsage`), send-failure counts (dashboard).
+Error tracking (e.g. Sentry), uptime on `/health/ready`, alerts on failed `Job` rows (visible in the Super Admin console), webhook 4xx/5xx rate, send-failure counts (dashboard).
 
 ## Known gaps before real traffic
-See `TESTING_AND_ACCEPTANCE.md` → "Not verified / limitations". The Meta Cloud, S3, OpenAI and Resend adapters are written but have **not** been exercised against the live services.
+See `TESTING_AND_ACCEPTANCE.md` → "Not verified / limitations". The Meta Cloud, S3 and Resend adapters are written but have **not** been exercised against the live services.

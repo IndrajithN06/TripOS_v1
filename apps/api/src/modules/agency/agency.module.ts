@@ -24,7 +24,7 @@ const brandingSchema = z.object({
 const settingsSchema = z.object({
   salesVisibility: z.enum(['all', 'assigned']).optional(), taxEnabled: z.boolean().optional(),
   taxRatePercent: z.number().min(0).max(100).optional(), taxMode: z.enum(['exclusive', 'inclusive']).optional(),
-  quoteValidityDays: z.number().int().min(1).max(90).optional(), aiEnabled: z.boolean().optional(),
+  quoteValidityDays: z.number().int().min(1).max(90).optional(),
 });
 
 @Roles('AGENCY_ADMIN')
@@ -128,12 +128,9 @@ export class AgencyController {
   settings(@CurrentUser() p: Principal) {
     return this.db.tenant(agencyOf(p), async (tx) => {
       const a = await tx.agency.findUniqueOrThrow({ where: { id: p.agencyId! } });
-      const monthStart = new Date(Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), 1));
-      const ai = await tx.aiUsage.aggregate({ where: { agencyId: a.id, createdAt: { gte: monthStart } }, _count: true, _sum: { estimatedCost: true, inputTokens: true, outputTokens: true } });
       return {
         name: a.name, timezone: a.timezone, currency: a.currency, salesVisibility: a.salesVisibility, taxEnabled: a.taxEnabled,
-        taxRatePercent: a.taxRatePercent.toString(), taxMode: a.taxMode, quoteValidityDays: a.quoteValidityDays, aiEnabled: a.aiEnabled,
-        aiMonthlyLimit: a.aiMonthlyLimit, aiUsage: { calls: ai._count, inputTokens: ai._sum.inputTokens ?? 0, outputTokens: ai._sum.outputTokens ?? 0, estimatedCost: ai._sum.estimatedCost?.toString() ?? '0' },
+        taxRatePercent: a.taxRatePercent.toString(), taxMode: a.taxMode, quoteValidityDays: a.quoteValidityDays,
       };
     });
   }

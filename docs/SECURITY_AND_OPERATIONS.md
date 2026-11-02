@@ -16,15 +16,14 @@
 | Webhooks | HMAC-SHA256 over the raw body, constant-time compare; tenant from the trusted `phone_number_id`; event de-duplication | `webhooks` |
 | Messaging safety | Idempotency keys; 24 h window and approved-template checks before any provider call | `outbound.service.ts` |
 | Quote integrity | Totals only from the pricing library; DB trigger freezes sent versions (even against raw SQL) | `quotes.service.ts`, migration |
-| AI safety | Server-side only; customer text passed as data; outputs sanitised and labelled drafts; per-agency limit; platform kill switch; usage logged | `ai.service.ts` |
 | Support access | Time-limited, reasoned, audited grant; metadata only | `platform` |
 | Audit | Append-only for the app role; logins, user/role changes, rate changes, quote events, settings, support access | `common/audit.ts` |
-| Config safety | Startup fails on development secrets, local storage, simulator, mock AI, console email, non-HTTPS URLs in production | `config/config.ts` |
+| Config safety | Startup fails on development secrets, local storage, simulator, console email, non-HTTPS URLs in production | `config/config.ts` |
 | Errors | Uniform envelope; stack traces only outside production | `common/errors.ts` |
 | Headers | Helmet on the API; `X-Frame-Options: DENY`, `nosniff` on the web app | `main.ts`, `next.config.mjs` |
 
 ## 2. Known weaknesses and residual risk
-- The Cloud, S3, OpenAI and Resend adapters are unverified live.
+- The Cloud, S3 and Resend adapters are unverified live.
 - Malware scanning of uploads is not implemented (type and size only).
 - No per-tenant rate limiting; no IP allow-listing for platform routes.
 - `app.bypass` is a session setting available to any SQL the app role runs; RLS protects against missing filters, not against SQL injection (the code uses parameterised queries only).
@@ -49,7 +48,6 @@ Keep production values in the host's secret manager; `.env` files are git-ignore
 - Watch for `payload_too_large` (413) on `/webhooks/*`: Meta documents payloads up to 3 MB and the limit is `WHATSAPP_WEBHOOK_MAX_BODY_BYTES` (default 4 MiB).
 - Error tracking for API and web.
 - Webhook 4xx/5xx rate and signature failures.
-- AI spend via `AiUsage`.
 - Send-failure counts (dashboard) and Meta quality rating.
 
 ## 5. Adding a tenant table (checklist)
@@ -80,4 +78,4 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON "NewTable" TO tripos_app;
 **Restore:** restore the latest snapshot into a scratch database, apply later migrations, verify row counts and a sample quote and PDF, then switch over. Practise before launch.
 
 ## 7. Routine operations
-Rotate secrets on a schedule; review audit logs and failed jobs weekly; update dependencies and rerun `npm test` and `npm run test:e2e`; verify backups restore; review AI usage and agency limits; review Meta quality rating and template status.
+Rotate secrets on a schedule; review audit logs and failed jobs weekly; update dependencies and rerun `npm test` and `npm run test:e2e`; verify backups restore; review Meta quality rating and template status.

@@ -11,7 +11,7 @@ const devEnv = {
 const goodProd = {
   NODE_ENV: 'production', APP_URL: 'https://app.example.com', API_URL: 'https://api.example.com', DATABASE_URL: 'postgresql://u:strongpw@db.example.com/tripos',
   SESSION_SECRET: 'x'.repeat(48), APP_ENCRYPTION_KEY: 'y'.repeat(48), STORAGE_PROVIDER: 's3', STORAGE_BUCKET: 'b', STORAGE_REGION: 'r', STORAGE_ACCESS_KEY_ID: 'k', STORAGE_SECRET_ACCESS_KEY: 's',
-  STORAGE_SIGNING_SECRET: 'prod-signing-secret', WHATSAPP_PROVIDER: 'cloud', WHATSAPP_APP_SECRET: 'sec', WHATSAPP_VERIFY_TOKEN: 'ver', AI_PROVIDER: 'disabled', EMAIL_PROVIDER: 'resend', EMAIL_API_KEY: 'key',
+  STORAGE_SIGNING_SECRET: 'prod-signing-secret', WHATSAPP_PROVIDER: 'cloud', WHATSAPP_APP_SECRET: 'sec', WHATSAPP_VERIFY_TOKEN: 'ver', EMAIL_PROVIDER: 'resend', EMAIL_API_KEY: 'key',
 };
 
 describe('Scenario 11: production configuration safety', () => {
@@ -26,19 +26,17 @@ describe('Scenario 11: production configuration safety', () => {
     ['short encryption key', { APP_ENCRYPTION_KEY: 'short-but-sixteen!!' }, /APP_ENCRYPTION_KEY/],
     ['local disk storage', { STORAGE_PROVIDER: 'local' }, /STORAGE_PROVIDER/],
     ['simulated WhatsApp', { WHATSAPP_PROVIDER: 'simulator' }, /WHATSAPP_PROVIDER/],
-    ['mock AI', { AI_PROVIDER: 'mock' }, /AI_PROVIDER/],
     ['console email', { EMAIL_PROVIDER: 'console' }, /EMAIL_PROVIDER/],
     ['dev database password', { DATABASE_URL: 'postgresql://tripos_app:tripos_app_dev_only@localhost/x' }, /development credentials/],
     ['http app url', { APP_URL: 'http://app.example.com' }, /APP_URL/],
     ['default signing secret', { STORAGE_SIGNING_SECRET: 'dev-only-storage-signing-secret' }, /STORAGE_SIGNING_SECRET/],
     ['missing webhook secret', { WHATSAPP_APP_SECRET: '' }, /WHATSAPP_APP_SECRET/],
-    ['openai without key', { AI_PROVIDER: 'openai' }, /AI_API_KEY/],
   ])('refuses %s in production instead of falling back silently', (_n, override, re) => {
     expect(() => validateConfig({ ...goodProd, ...override } as any)).toThrow(re);
   });
   it('reports every problem at once', () => {
-    try { validateConfig({ ...goodProd, STORAGE_PROVIDER: 'local', WHATSAPP_PROVIDER: 'simulator', AI_PROVIDER: 'mock' } as any); fail('should throw'); }
-    catch (e) { expect((e as Error).message).toMatch(/STORAGE_PROVIDER[\s\S]*WHATSAPP_PROVIDER[\s\S]*AI_PROVIDER/); }
+    try { validateConfig({ ...goodProd, STORAGE_PROVIDER: 'local', WHATSAPP_PROVIDER: 'simulator' } as any); fail('should throw'); }
+    catch (e) { expect((e as Error).message).toMatch(/STORAGE_PROVIDER[\s\S]*WHATSAPP_PROVIDER/); }
   });
   it('mock providers in production need an explicit opt-in flag', () => {
     expect(() => validateConfig({ ...goodProd, WHATSAPP_PROVIDER: 'simulator', ALLOW_MOCK_PROVIDERS_IN_PRODUCTION: 'true' } as any)).not.toThrow();

@@ -34,15 +34,15 @@ function fromInput(i: any, tz: string): Form {
   };
 }
 
-export function QuoteBuilder({ conversationId, customerId, quoteId, prefill, onClose, onChanged }: {
-  conversationId?: string; customerId?: string; quoteId?: string; prefill?: Partial<Form>; onClose: () => void; onChanged?: () => void;
+export function QuoteBuilder({ conversationId, customerId, quoteId, onClose, onChanged }: {
+  conversationId?: string; customerId?: string; quoteId?: string; onClose: () => void; onChanged?: () => void;
 }) {
   const me = useMe();
   const tz = me.agency?.timezone ?? 'Asia/Kolkata';
   const run = useAction();
   const { data: vehicles } = useApi<any[]>('/agency/vehicle-types');
   const [quote, setQuote] = useState<any>(null);
-  const [form, setForm] = useState<Form>(() => ({ ...blank(tz), ...prefill }));
+  const [form, setForm] = useState<Form>(() => blank(tz));
   const [calc, setCalc] = useState<any>(null), [calcErr, setCalcErr] = useState('');
   const [preview, setPreview] = useState<any>(null), [sendResult, setSendResult] = useState<any>(null), [busy, setBusy] = useState(false);
   const [noPhotoPrompt, setNoPhotoPrompt] = useState(false);

@@ -16,6 +16,7 @@
 - **D-12 Profile freshness.** The app shell re-fetches the profile after branding changes and every 4 minutes (signed logo URLs live about 5 minutes).
 - **D-13 Dashboard scope.** Sales users see only their own quotes and no pipeline value; failure alerts are agency-wide.
 - **D-14 Analytics charts.** Hand-written SVG instead of a charting library (no dependency, full control of accessibility and theme). Categorical palette limited to three series, validated against the card surface.
+- **D-AI AI removed (budget).** All AI features (summaries, trip extraction, reply suggestions, quote drafting, negotiation, the AI provider adapters, the per-agency AI switch and limit, and the platform kill switch) were removed from the code, UI, API and docs because there is no budget for its infrastructure. V1 does not depend on AI. The database columns and tables that served it (`Agency.aiEnabled`, `Agency.aiMonthlyLimit`, `AiUsage`, `PlatformSetting`) were left in place so no migration was needed; drop them in a later, separately approved migration. The code is in git history if AI is wanted again.
 
 ## Business assumptions (confirm before production)
 | # | Assumption | Default implemented |
@@ -30,7 +31,6 @@
 | A-8 | Customer-facing format | Branded PDF + text summary + selected photos as separate image messages. |
 | A-9 | Service window | Free-form messages only within 24 h of the customer's last message; otherwise an approved template. |
 | A-10 | Rate overrides | Admin always; Sales only if `canOverrideRates`. Discounts are treated as rate changes. |
-| A-11 | AI cost estimate | Illustrative per-token USD rates in `AiService.record`; set from the real provider price sheet before relying on it. |
 | A-12 | Retention | Not defined by the documents. Nothing is auto-deleted. Messages/media are kept; vehicle photos used in sent quotes are never deleted. Define policy before launch. |
 
 ## Open decisions needing the product owner

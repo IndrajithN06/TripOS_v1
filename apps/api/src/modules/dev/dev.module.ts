@@ -4,7 +4,6 @@ import { z } from 'zod';
 import { agencyOf, CurrentUser, parse, Principal, Public, Roles } from '../../common/auth';
 import { config } from '../../config/config';
 import { Db } from '../../db/db.service';
-import { AI, MockAi } from '../../providers/ai/ai';
 import { ConsoleEmail } from '../../providers/email/email';
 import { STORAGE, StorageProvider, verifyLocalSignature, LocalStorageProvider } from '../../providers/storage/storage';
 import { SimulatorWhatsApp, WHATSAPP, WhatsAppProvider } from '../../providers/whatsapp/whatsapp';
@@ -90,8 +89,6 @@ export class DevController {
     });
   }
 
-  @Post('simulator/ai-fail-next')
-  aiFail() { assertSimulator(this.wa); MockAi.failNext = true; return { ok: true }; }
 
   @Post('jobs/tick')
   async tick() { assertSimulator(this.wa); return { ran: await this.jobs.tick() }; }

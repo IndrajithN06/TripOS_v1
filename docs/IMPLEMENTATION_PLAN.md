@@ -9,8 +9,8 @@
 | 4 Quote engine | Pure pricing lib, builder, tax/discount, preview, PDF, immutable versions, statuses, diff | Done |
 | 5 Inbox | Conversations, thread, simulator, notes, assignment, statuses | Done (polling, not SSE) |
 | 6 Chat-to-quote delivery | Photo selection, send PDF+photos, requote, partial failure + per-item retry | Done |
-| 7 Real providers | Meta Cloud, S3, OpenAI, Resend adapters written | Written, **unverified live** |
-| 8 AI & templates | Extract/summary/reply/negotiation/draft; template drafts + provider states; limits, kill switch | Done (mock tested); Meta template submission not implemented |
+| 7 Real providers | Meta Cloud, S3, Resend adapters written | Written, **unverified live** |
+| 8 Templates | Template drafts + provider states | Done (the AI part of this step was removed); Meta template submission not implemented |
 | 9 Dashboard/UX | Metrics, filters, activity, loading/empty/error states | Done |
 | 10 Hardening | Isolation/permission/failure tests, production build | Done for API; no browser E2E |
 | 11 Approval checkpoint | Report and wait | **Reached; awaiting your approval** |

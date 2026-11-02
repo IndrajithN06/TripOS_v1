@@ -61,7 +61,7 @@ describe('the example env files (M1)', () => {
       APP_URL: 'https://app.example.com', API_URL: 'https://api.example.com', PUBLIC_QUOTE_BASE_URL: 'https://app.example.com',
       STORAGE_PROVIDER: 's3', STORAGE_BUCKET: 'bucket', STORAGE_REGION: 'ap-south-1', STORAGE_ACCESS_KEY_ID: 'AKIAEXAMPLE', STORAGE_SECRET_ACCESS_KEY: 'storage-secret',
       WHATSAPP_APP_ID: '1234567890', WHATSAPP_APP_SECRET: 'whatsapp-app-secret', WHATSAPP_VERIFY_TOKEN: 'real-verify-token',
-      AI_PROVIDER: 'disabled', EMAIL_PROVIDER: 'resend', EMAIL_API_KEY: 'email-key',
+      EMAIL_PROVIDER: 'resend', EMAIL_API_KEY: 'email-key',
     };
     expect(messageOf({ ...example, ...real, NODE_ENV: 'production' })).toBe('');
   });

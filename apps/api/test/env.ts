@@ -6,6 +6,5 @@ process.env.APP_ENCRYPTION_KEY = 'test-encryption-key-0123456789abcdef';
 process.env.STORAGE_PROVIDER = 'local';
 process.env.STORAGE_LOCAL_DIR = './storage-test';
 process.env.WHATSAPP_PROVIDER = 'simulator';
-process.env.AI_PROVIDER = 'mock';
 process.env.EMAIL_PROVIDER = 'console';
 process.env.JOBS_WORKER = 'false';

@@ -9,7 +9,7 @@ Base URL (local): `http://localhost:4100`. The web app calls the API through its
 - **Roles:** `SA` Super Admin, `AA` Agency Admin, `S` Sales. "Any agency" = AA or S.
 - **Money:** decimal strings with two decimals (`"20400.00"`). Inputs accept strings or numbers with at most 2 decimals.
 - **Times:** ISO-8601 UTC in and out; the UI renders them in the agency timezone.
-- **Errors:** `{ "error": { "code", "message", "issues?" } }`. Common codes: `validation_error` (400), `duration_required` (400), `unauthenticated` (401), `forbidden` / `csrf` (403), `not_found` (404), `conflict` / `immutable` / `version_sent` (409), `pricing_error` (422), `ai_bad_output` (502), `ai_unavailable` (503). Production responses never include stack traces.
+- **Errors:** `{ "error": { "code", "message", "issues?" } }`. Common codes: `validation_error` (400), `duration_required` (400), `unauthenticated` (401), `forbidden` / `csrf` (403), `not_found` (404), `conflict` / `immutable` / `version_sent` (409), `pricing_error` (422). Production responses never include stack traces.
 - **Rate limits:** login and accept-invite are limited to 10 per minute per client; general limit 600 per minute.
 - **Pagination:** list endpoints take `page` and `pageSize` (max 100).
 
@@ -28,7 +28,7 @@ Base URL (local): `http://localhost:4100`. The web app calls the API through its
 | Method | Path | Roles | Notes |
 |---|---|---|---|
 | POST | `/auth/logout` | any | |
-| GET | `/me` | any | user, agency (name, colour, signed logo URL), permissions, environment flags (simulator, AI, storage) |
+| GET | `/me` | any | user, agency (name, colour, signed logo URL), permissions, environment flags (simulator, storage) |
 | POST | `/auth/mfa/setup` | any | returns secret and otpauth URL |
 | POST | `/auth/mfa/enable` | any | `{code}` |
 
@@ -37,7 +37,7 @@ Base URL (local): `http://localhost:4100`. The web app calls the API through its
 |---|---|---|
 | POST | `/platform/agencies` | `{name, slug, adminName, adminEmail, plan?, aiMonthlyLimit?, timezone?}`; in non-production returns `inviteUrl` |
 | GET | `/platform/agencies` | `search`, `status`; includes usage counts |
-| PATCH | `/platform/agencies/:id` | `status` (active/suspended), `name`, `aiEnabled`, `aiMonthlyLimit`, `plan`; suspension is immediate |
+| PATCH | `/platform/agencies/:id` | `status` (active/suspended), `name`, `plan`; suspension is immediate |
 | POST | `/platform/agencies/:id/reinvite-admin` | new set-password link for the first admin |
 | POST | `/platform/support-access` | `{agencyId, reason(10+), minutes(5-60)}`; audited |
 | GET | `/platform/support/:id/conversations` | conversation metadata only, needs a live grant |
@@ -52,7 +52,7 @@ Base URL (local): `http://localhost:4100`. The web app calls the API through its
 | POST | `/agency/users/:id/reinvite` | resend invite or issue password-reset link |
 | GET (any) / PATCH | `/agency/branding` | colour, tagline, contact, footer, terms, inclusions, exclusions |
 | POST | `/agency/branding/logo` | multipart `file` (JPEG/PNG, 5 MB) |
-| GET/PATCH | `/agency/settings` | `salesVisibility`, tax (`taxEnabled`, `taxRatePercent`, `taxMode`), `quoteValidityDays`, `aiEnabled`; GET includes AI usage |
+| GET/PATCH | `/agency/settings` | `salesVisibility`, tax (`taxEnabled`, `taxRatePercent`, `taxMode`), `quoteValidityDays` |
 | GET | `/agency/audit` | latest 100 audit entries |
 | GET | `/agency/whatsapp` | connection view (never the token): `connectionStatus` (connecting/connected/degraded/disconnected), `statusReason`, quality rating, messaging limit tier, display-name status, `webhookSubscribed`, `lastWebhookAt`, `lastCheckedAt`, `lastErrorCode` |
 | POST | `/agency/whatsapp/connect` | simulator: `{displayName}`; cloud: also `wabaId`, `phoneNumberId`, `accessToken`. Cloud mode verifies the token, subscribes the webhook, then stores the token encrypted; any failure stores nothing. `409` if the number or WABA belongs to another agency. |
@@ -106,7 +106,7 @@ Draft body (`POST /quotes`, `PATCH .../draft`, `POST /quotes/calculate`): `trip{
 | Method | Path | Notes |
 |---|---|---|
 | GET | `/inbox/conversations` | `search`, `filter` (all, unread, mine, unassigned, open, closed, quoted) |
-| GET | `/inbox/conversations/:id` | customer, assignee, notes, quotes, 24h-window state (`windowOpen`, `windowExpiresAt`), `sendBlock` (`null`, or `{code, message}` explaining why a free-form text cannot be sent now: `window_closed` or `whatsapp_not_connected`), `chargesNotice`, AI summary |
+| GET | `/inbox/conversations/:id` | customer, assignee, notes, quotes, 24h-window state (`windowOpen`, `windowExpiresAt`), `sendBlock` (`null`, or `{code, message}` explaining why a free-form text cannot be sent now: `window_closed` or `whatsapp_not_connected`), `chargesNotice` |
 | GET | `/inbox/conversations/:id/messages` | `limit`, `before` |
 | POST | `/inbox/conversations/:id/messages` | `{type:'text',text}` or `{type:'template',templateId,variables[]}`, optional `idempotencyKey` |
 | GET | `/inbox/conversations/:id/starter-templates` | The five built-in TripOS message starters (Quotation Ready, Quote Follow-up, Booking Confirmation, Payment Reminder, Upcoming Trip Reminder) with their fields, plus `windowOpen`, `sendBlock` and a neutral `notice`. Read-only; same visibility rule as the conversation |
@@ -115,7 +115,6 @@ Draft body (`POST /quotes`, `PATCH .../draft`, `POST /quotes/calculate`): `trip{
 | POST | `/inbox/conversations/:id/read` | clears unread |
 | POST | `/inbox/conversations/:id/notes` | internal, never sent |
 | PATCH | `/inbox/conversations/:id` | `assignedUserId` (must be an active user of this agency), `status` |
-| POST | `/inbox/conversations/:id/ai/:feature` | `summary`, `reply-suggestions`, `extract`, `quote-draft` (same contract as `extract`; no behaviour of its own yet), `negotiation`; drafts only. Each feature has its own instructions and JSON output contract (`modules/ai/ai-contracts.ts`), and the model's answer is validated before anything is shown or saved. Response shape is unchanged: `output` is `{summary, openQuestions}`, `{replies}`, `{fields, unknown, confidence}` or `{reply, suggestedDiscountPercent, note}`. In `fields`, a value the customer did not state is `null` (never `0` or a default) and `unknown` lists those fields. `days` is set only when the customer clearly states the number of days; a trip described only in nights, or only by dates, leaves `days` as `null`, because nights are never converted and days are never worked out from dates (the quote form derives days from the pickup and return times itself). `suggestedDiscountPercent` is a number from 0 to 100 or `null`; the model may write it as text such as `"10%"`, which is read as `10`, and anything malformed or outside 0-100 rejects the whole answer (it is a suggestion for staff to read and is never applied to a quote). Errors: `503 ai_unavailable` when the provider cannot be used (and `ai_kill_switch`, `ai_disabled`, `ai_limit_reached`); **`502 ai_bad_output`** when the provider answered but the answer was cut off, not valid JSON, or did not match the contract: nothing is shown or saved, the call is recorded in usage as `invalid_output` with its real token counts, and **counts toward the agency's monthly limit** exactly like a successful call, because it cost real tokens (calls that fail because the provider could not be reached are recorded as `error` with zero tokens and do not count) |
 
 **Free-form text and the service window.** A free-form text is accepted only while the conversation's last *inbound* message is less than 24 hours old (exactly 24 hours is closed; our own messages never extend it). Otherwise the API returns `400 window_closed`, and a disconnected number returns `400 whatsapp_not_connected` (checked first, with the stored reason). Outside the window only an approved Meta template can be sent; a template that is not `approved` returns `400 template_not_approved`, and nothing is ever sent as a text instead. The check is made on the server on every send, and `sendBlock` on the conversation only mirrors it for the UI.
 
@@ -128,4 +127,4 @@ Draft body (`POST /quotes`, `PATCH .../draft`, `POST /quotes/calculate`): `trip{
 | GET | `/dashboard/analytics?from&to` | KPIs with previous-period comparison, daily series, funnel, status split, top vehicles, heatmap |
 
 ## Development-only (`/dev/*`, 404 in production and with the real WhatsApp provider)
-`POST /dev/simulator/inbound`, `/status`, `/fail-next`, `/template-decision`, `/ai-fail-next`; `POST /dev/jobs/tick`; `GET /dev/emails`.
+`POST /dev/simulator/inbound`, `/status`, `/fail-next`, `/template-decision`; `POST /dev/jobs/tick`; `GET /dev/emails`.

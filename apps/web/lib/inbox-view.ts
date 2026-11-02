@@ -40,3 +40,21 @@ export function dayLabel(d: string | Date, tz = DEFAULT_TZ, now: Date = new Date
   if (key === dayKey(new Date(now.getTime() - 86_400_000), tz)) return 'Yesterday';
   return new Intl.DateTimeFormat('en-IN', { timeZone: tz, day: '2-digit', month: 'short', year: 'numeric' }).format(date);
 }
+
+export type ChatStatusKind = 'disconnected' | 'open' | 'template_only';
+export interface ChatStatus { kind: ChatStatusKind; label: string; tone: 'red' | 'green' | 'amber'; title: string }
+
+/**
+ * The one status chip in the chat header. The connection comes first: a disconnected number cannot send anything, so
+ * "window open" or "template only" would be misleading. Derived only from what the API already reports for the conversation
+ * (`sendBlock.code` and `windowOpen`); nothing is recalculated here.
+ */
+export function chatStatus(o: { sendBlockCode?: string | null; windowOpen: boolean }): ChatStatus {
+  if (o.sendBlockCode === 'whatsapp_not_connected') {
+    return { kind: 'disconnected', label: 'Disconnected', tone: 'red', title: 'WhatsApp is disconnected, so nothing can be sent until an admin reconnects it' };
+  }
+  if (o.windowOpen) {
+    return { kind: 'open', label: 'Free replies open', tone: 'green', title: "Free-form replies are allowed for 24 hours after the customer's last message" };
+  }
+  return { kind: 'template_only', label: 'Template only', tone: 'amber', title: 'The 24-hour window is closed: only an approved WhatsApp template can be sent until the customer replies' };
+}

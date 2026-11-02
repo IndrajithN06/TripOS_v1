@@ -1,5 +1,4 @@
 import { Global, Module } from '@nestjs/common';
-import { AI, createAi } from './ai/ai';
 import { createEmail, EMAIL } from './email/email';
 import { createStorage, STORAGE } from './storage/storage';
 import { createWhatsApp, WHATSAPP } from './whatsapp/whatsapp';
@@ -9,9 +8,8 @@ import { createWhatsApp, WHATSAPP } from './whatsapp/whatsapp';
   providers: [
     { provide: STORAGE, useFactory: createStorage },
     { provide: WHATSAPP, useFactory: createWhatsApp },
-    { provide: AI, useFactory: createAi },
     { provide: EMAIL, useFactory: createEmail },
   ],
-  exports: [STORAGE, WHATSAPP, AI, EMAIL],
+  exports: [STORAGE, WHATSAPP, EMAIL],
 })
 export class ProvidersModule {}
