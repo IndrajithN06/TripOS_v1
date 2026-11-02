@@ -10,6 +10,11 @@ export function fmtDateTime(d: string | Date | null | undefined, tz = DEFAULT_TZ
   if (!d) return '—';
   return new Intl.DateTimeFormat('en-IN', { timeZone: tz, day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true }).format(new Date(d));
 }
+/** Date only, in the agency timezone. */
+export function fmtDate(d: string | Date | null | undefined, tz = DEFAULT_TZ) {
+  if (!d) return '—';
+  return new Intl.DateTimeFormat('en-IN', { timeZone: tz, day: '2-digit', month: 'short', year: 'numeric' }).format(new Date(d));
+}
 export function fmtTime(d: string | Date, tz = DEFAULT_TZ) {
   return new Intl.DateTimeFormat('en-IN', { timeZone: tz, hour: '2-digit', minute: '2-digit', hour12: true }).format(new Date(d));
 }

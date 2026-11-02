@@ -80,7 +80,7 @@ function Team() {
         <div><button className="btn primary" onClick={() => run(async () => { const r = await api('/agency/users', { body: f }); setInvite(r.inviteUrl ?? ''); setF({ name: '', email: '', role: 'SALES' }); }, 'Invitation sent').then(reload)}>Send invite</button></div>
         {invite && <div className="banner warn small">Development mode: invite link <a href={invite}>{invite}</a></div>}
       </div>
-      <div className="card table-wrap">
+      <div className="card table-wrap sticky-head">
         <table><thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Status</th><th>Can change rates</th><th /></tr></thead>
           <tbody>{data?.map((u) => (
             <tr key={u.id}><td>{u.name}</td><td>{u.email}</td><td>{u.role.replace('_', ' ').toLowerCase()}</td><td><StatusBadge s={u.status} /></td>
@@ -180,7 +180,7 @@ function Audit() {
   const me = useMe();
   const { data, error, reload } = useApi<any[]>('/agency/audit');
   return (
-    <div className="card table-wrap"><ErrorBox e={error} retry={reload} />
+    <div className="card table-wrap sticky-head"><ErrorBox e={error} retry={reload} />
       <table><thead><tr><th>When</th><th>Action</th><th>Entity</th><th>Details</th></tr></thead><tbody>{data?.map((a) => (
         <tr key={a.id}><td className="small">{fmtDateTime(a.createdAt, me.agency?.timezone)}</td><td>{a.action}</td><td className="small muted">{a.entityType}</td><td className="small muted">{JSON.stringify(a.metadata).slice(0, 120)}</td></tr>))}</tbody></table>
     </div>

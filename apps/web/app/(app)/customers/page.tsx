@@ -20,7 +20,7 @@ export default function Customers() {
         </div>
       </div>
       <ErrorBox e={error} retry={reload} />
-      <div className="card table-wrap">
+      <div className="card table-wrap sticky-head">
         {loading && !data ? <Loading /> : data?.items.length === 0 ? <Empty>{search ? 'No customers match your search.' : 'No customers yet. Customers appear when someone messages you on WhatsApp, or add one yourself.'}</Empty> : (
           <table>
             <thead><tr><th>Name</th><th>Phone</th><th>Email</th><th className="right">Chats</th><th className="right">Quotes</th><th>Last activity</th><th>Added</th></tr></thead>
@@ -35,7 +35,7 @@ export default function Customers() {
         )}
       </div>
       {data && data.total > data.pageSize && (
-        <div className="row" style={{ marginTop: 12 }}>
+        <div className="row module-footer">
           <button className="btn sm" disabled={page <= 1} onClick={() => setPage(page - 1)}>Previous</button>
           <span className="small muted">Page {page} of {Math.ceil(data.total / data.pageSize)} · {data.total} customers</span>
           <button className="btn sm" disabled={page * data.pageSize >= data.total} onClick={() => setPage(page + 1)}>Next</button>

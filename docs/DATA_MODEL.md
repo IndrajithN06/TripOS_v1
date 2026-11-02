@@ -23,7 +23,7 @@ PostgreSQL 16, managed with Prisma migrations (`apps/api/prisma`). 24 tables and
 |---|---|---|
 | `WhatsappAccount` | An agency's connection | one per agency; `phoneNumberId` unique (tenant resolution for webhooks); `credentialSecretRef` = AES-256-GCM encrypted token; `mode` simulator / cloud |
 | `Customer` | End customer | unique (`agencyId`, `phoneE164`) |
-| `Conversation` | A chat | `status` open / pending / closed; `assignedUserId`; `lastInboundAt` (drives the 24 h window); `unreadCount`; `summary` (unused since the AI removal) |
+| `Conversation` | A chat | `status` open / pending / closed (open = the customer is waiting for the agency, pending = the agency answered and waits, closed = resolved; the staff-facing New / Active / Waiting / Resolved is derived from it, see the API reference); `assignedUserId` (used only for assigned-only visibility); `lastInboundAt` (drives the 24 h window); `unreadCount`; `summary` (unused since the AI removal) |
 | `ConversationNote` | Internal notes | never sent to customers |
 | `Message` | Inbound and outbound | `direction`, `type`, `status` (queued/submitted/sent/delivered/read/failed/received), `providerMessageId`, `simulated`, `idempotencyKey`; unique (`agencyId`,`providerMessageId`) and (`agencyId`,`idempotencyKey`) |
 | `WebhookEvent` | De-duplication ledger | unique (`agencyId`,`eventKey`) |

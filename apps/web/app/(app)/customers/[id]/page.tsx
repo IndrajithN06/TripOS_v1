@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { api, useApi } from '@/lib/api';
 import { displayPhone, validateCustomerForm, CustomerFormErrors } from '@/lib/customers';
 import { fmtDateTime, fmtRelative, inr } from '@/lib/format';
+import { inboxLink, latestConversationId } from '@/lib/inbox-link';
 import { Empty, ErrorBox, Field, Loading, Modal, StatusBadge, errMsg, useMe, useToast } from '@/components/ui';
 import { QuoteBuilder } from '@/components/QuoteBuilder';
 
@@ -26,7 +27,7 @@ export default function CustomerDetail() {
         <div className="row">
           <button className="btn primary" onClick={() => setQuoting(true)}>＋ New quote</button>
           <button className="btn" onClick={() => setEditing(true)}>Edit</button>
-          {c.conversations.length > 0 && <a className="btn" href="/inbox">Open WhatsApp inbox</a>}
+          {c.conversations.length > 0 && <a className="btn" href={inboxLink(latestConversationId(c.conversations))}>Open WhatsApp inbox</a>}
         </div>
       </div>
 
@@ -41,10 +42,10 @@ export default function CustomerDetail() {
         <div className="card stack">
           <h2>WhatsApp conversations</h2>
           {c.conversations.length === 0 ? <div className="small muted">No WhatsApp conversation yet. You can still create a quote for this customer.</div> : (
-            <div className="table-wrap"><table>
-              <thead><tr><th>Status</th><th>Last message</th><th>Assigned to</th><th className="right">Unread</th></tr></thead>
+            <div className="table-wrap sticky-head"><table>
+              <thead><tr><th>Status</th><th>Last message</th><th>Assigned to</th><th className="right">Unread</th><th /></tr></thead>
               <tbody>{c.conversations.map((v: any) => (
-                <tr key={v.id}><td><StatusBadge s={v.status} /></td><td className="small muted">{fmtRelative(v.lastMessageAt)} ago</td><td className="small">{v.assignedUser?.name ?? <span className="muted">Unassigned</span>}</td><td className="right mono">{v.unreadCount}</td></tr>))}</tbody>
+                <tr key={v.id}><td><StatusBadge s={v.status} /></td><td className="small muted">{fmtRelative(v.lastMessageAt)} ago</td><td className="small">{v.assignedUser?.name ?? <span className="muted">Unassigned</span>}</td><td className="right mono">{v.unreadCount}</td><td className="right"><a className="btn sm" href={inboxLink(v.id)}>Open chat</a></td></tr>))}</tbody>
             </table></div>
           )}
         </div>
@@ -53,7 +54,7 @@ export default function CustomerDetail() {
       <div className="card stack" style={{ marginTop: 14 }}>
         <div className="row between"><h2 style={{ margin: 0 }}>Quotes</h2><button className="btn sm" onClick={() => setQuoting(true)}>＋ New quote</button></div>
         {c.quotes.length === 0 ? <Empty>No quotes for this customer yet.</Empty> : (
-          <div className="table-wrap"><table>
+          <div className="table-wrap sticky-head"><table>
             <thead><tr><th>Quote</th><th>Vehicle</th><th className="right">Total</th><th>Status</th><th>Follow-up</th><th>Created</th></tr></thead>
             <tbody>{c.quotes.map((q: any) => (
               <tr key={q.id} className="click" onClick={() => (location.href = `/quotes/${q.id}`)}>

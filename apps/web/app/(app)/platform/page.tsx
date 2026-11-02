@@ -17,7 +17,7 @@ export default function Platform() {
         <div className="row"><input type="search" aria-label="Search agencies" placeholder="Search agencies" value={search} onChange={(e) => setSearch(e.target.value)} /><button className="btn primary" onClick={() => setCreating(true)}>＋ Create agency</button></div></div>
       {invite && <div className="banner warn small" style={{ marginBottom: 12 }}>Development mode: admin invite link <a href={invite}>{invite}</a></div>}
       <ErrorBox e={agencies.error} retry={agencies.reload} />
-      <div className="card table-wrap">
+      <div className="card table-wrap sticky-head">
         {agencies.loading && !agencies.data ? <Loading /> : agencies.data?.length === 0 ? <Empty>No agencies yet.</Empty> : (
           <table><thead><tr><th>Agency</th><th>Status</th><th>Users</th><th>Chats</th><th>Quotes</th><th>Failed jobs</th><th /></tr></thead><tbody>{agencies.data?.map((a) => (
             <tr key={a.id}><td><strong>{a.name}</strong><div className="small muted">{a.slug} · {a.plan}</div></td><td><StatusBadge s={a.status} /></td><td>{a.usage.users}</td><td>{a.usage.conversations}</td><td>{a.usage.quotes}</td>

@@ -1,9 +1,11 @@
 import { BadRequestException, Body, Controller, Get, Injectable, NotFoundException, Param, ParseUUIDPipe, Patch, Post, Query } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { z } from 'zod';
 import { audit } from '../../common/audit';
 import { AssetService } from '../../common/assets';
 import { agencyOf, CurrentUser, parse, Principal, Roles } from '../../common/auth';
 import { Db, Tx } from '../../db/db.service';
+import { ACCEPTED_REPLY_STATUSES, STATUS_AFTER_RESOLVE, workflowOf } from './conversation-workflow';
 import { OutboundService } from './outbound.service';
 import { outstationDays } from '../quotes/trip-duration';
 import { textSendBlock, windowState } from './service-window';
@@ -36,14 +38,30 @@ export class InboxService {
     return c;
   }
 
-  async list(p: Principal, agencyId: string, q: { search?: string; filter?: string; page: number; pageSize: number }) {
+  /** Which of these chats the agency has answered (an accepted outbound message exists). One grouped query, no per-chat lookups. */
+  private async answeredAmong(tx: Tx, agencyId: string, ids: string[]): Promise<Set<string>> {
+    if (!ids.length) return new Set();
+    const rows = await tx.message.groupBy({ by: ['conversationId'], where: { agencyId, conversationId: { in: ids }, direction: 'outbound', status: { in: [...ACCEPTED_REPLY_STATUSES] } }, _count: { _all: true } });
+    return new Set(rows.map((r) => r.conversationId));
+  }
+
+  /** Ids behind the New / Active filters: chats the customer is waiting on, never answered (New) or answered before (Active). */
+  private async awaitingAgencyIds(tx: Tx, agencyId: string, answeredBefore: boolean): Promise<string[]> {
+    const exists = Prisma.sql`EXISTS (SELECT 1 FROM "Message" m WHERE m."conversationId" = c.id AND m.direction = 'outbound' AND m.status IN ('submitted', 'sent', 'delivered', 'read'))`;
+    const rows = await tx.$queryRaw<{ id: string }[]>(Prisma.sql`SELECT c.id FROM "Conversation" c WHERE c."agencyId" = ${agencyId}::uuid AND c.status NOT IN ('pending', 'closed') AND ${answeredBefore ? exists : Prisma.sql`NOT ${exists}`}`);
+    return rows.map((r) => r.id);
+  }
+
+  async list(p: Principal, agencyId: string, q: { search?: string; filter?: string; focus?: string; page: number; pageSize: number }) {
     return this.db.tenant(agencyId, async (tx) => {
       const where: any = { agencyId, ...(await this.scope(tx, p, agencyId)) };
       if (q.filter === 'unread') where.unreadCount = { gt: 0 };
       if (q.filter === 'mine') where.assignedUserId = p.userId;
       if (q.filter === 'unassigned') where.assignedUserId = null;
       if (q.filter === 'open') where.status = { not: 'closed' };
-      if (q.filter === 'closed') where.status = 'closed';
+      if (q.filter === 'closed' || q.filter === 'resolved') where.status = 'closed';
+      if (q.filter === 'waiting') where.status = 'pending';
+      if (q.filter === 'new' || q.filter === 'active') (where.AND ??= []).push({ id: { in: await this.awaitingAgencyIds(tx, agencyId, q.filter === 'active') } });
       if (q.filter === 'quoted') {
         const quoted = await tx.quote.findMany({ where: { agencyId, deletedAt: null, conversationId: { not: null } }, select: { conversationId: true } });
         where.id = { in: quoted.map((x) => x.conversationId!) };
@@ -53,8 +71,16 @@ export class InboxService {
         const msgs = await tx.message.findMany({ where: { agencyId, text: { contains: q.search, mode: 'insensitive' } }, select: { conversationId: true }, take: 200 });
         where.OR = [{ customerId: { in: custs.map((c) => c.id) } }, { id: { in: msgs.map((m) => m.conversationId) } }];
       }
-      const [total, rows] = await Promise.all([tx.conversation.count({ where }), tx.conversation.findMany({ where, orderBy: { lastMessageAt: 'desc' }, skip: (q.page - 1) * q.pageSize, take: q.pageSize })]);
+      const [total, found] = await Promise.all([tx.conversation.count({ where }), tx.conversation.findMany({ where, orderBy: { lastMessageAt: 'desc' }, skip: (q.page - 1) * q.pageSize, take: q.pageSize })]);
+      let rows = found;
+      // `focus` pins one chat to the top of the unfiltered first page (used when a customer or quotation links to "its" chat, so the list can show it
+      // even if it is older than the page). It follows the same visibility rule as the list itself: a chat the person may not see is never added.
+      if (q.focus && q.page === 1 && !q.search && (!q.filter || q.filter === 'all')) {
+        const pinned = await tx.conversation.findFirst({ where: { id: q.focus, agencyId, ...(await this.scope(tx, p, agencyId)) } });
+        if (pinned) rows = [pinned, ...found.filter((r) => r.id !== pinned.id)].slice(0, q.pageSize);
+      }
       const ids = rows.map((r) => r.id);
+      const [answered, agency] = await Promise.all([this.answeredAmong(tx, agencyId, ids), tx.agency.findUniqueOrThrow({ where: { id: agencyId }, select: { salesVisibility: true } })]);
       const [customers, users, lastMsgs, quotes] = await Promise.all([
         tx.customer.findMany({ where: { id: { in: rows.map((r) => r.customerId) } } }),
         tx.user.findMany({ where: { id: { in: rows.map((r) => r.assignedUserId).filter(Boolean) as string[] } }, select: { id: true, name: true } }),
@@ -62,9 +88,9 @@ export class InboxService {
         tx.quote.findMany({ where: { agencyId, deletedAt: null, conversationId: { in: ids } }, orderBy: { createdAt: 'desc' }, select: { conversationId: true, status: true, quoteNumber: true } }),
       ]);
       return {
-        total, page: q.page, pageSize: q.pageSize,
+        total, page: q.page, pageSize: q.pageSize, salesVisibility: agency.salesVisibility,
         items: rows.map((r, i) => ({
-          id: r.id, status: r.status, unreadCount: r.unreadCount, lastMessageAt: r.lastMessageAt, customer: customers.find((c) => c.id === r.customerId) && { id: r.customerId, name: customers.find((c) => c.id === r.customerId)!.name, phone: customers.find((c) => c.id === r.customerId)!.phoneE164 },
+          id: r.id, status: r.status, workflow: workflowOf(r.status, answered.has(r.id)), unreadCount: r.unreadCount, lastMessageAt: r.lastMessageAt, customer: customers.find((c) => c.id === r.customerId) && { id: r.customerId, name: customers.find((c) => c.id === r.customerId)!.name, phone: customers.find((c) => c.id === r.customerId)!.phoneE164 },
           assignedUser: users.find((u) => u.id === r.assignedUserId) ?? null, preview: lastMsgs[i]?.text?.slice(0, 80) ?? (lastMsgs[i] ? `[${lastMsgs[i]!.type}]` : ''),
           lastQuote: quotes.find((x) => x.conversationId === r.id) ?? null,
         })),
@@ -75,25 +101,59 @@ export class InboxService {
   async detail(p: Principal, agencyId: string, id: string) {
     return this.db.tenant(agencyId, async (tx) => {
       const c = await this.getConversation(tx, p, agencyId, id);
-      const [customer, notes, quotes, assignee] = await Promise.all([
+      const scope = await this.scope(tx, p, agencyId);
+      const restricted = Object.keys(scope).length > 0;
+      const [customer, notes, quotes, assignee, answered, agency, account] = await Promise.all([
         tx.customer.findFirstOrThrow({ where: { id: c.customerId, agencyId } }),
         tx.conversationNote.findMany({ where: { agencyId, conversationId: id }, orderBy: { createdAt: 'asc' } }),
-        tx.quote.findMany({ where: { agencyId, deletedAt: null, conversationId: id }, orderBy: { createdAt: 'desc' }, select: { id: true, quoteNumber: true, status: true, currentVersionId: true, ownerUserId: true } }),
+        tx.quote.findMany({ where: { agencyId, deletedAt: null, conversationId: id }, orderBy: { createdAt: 'desc' }, select: { id: true, quoteNumber: true, status: true, currentVersionId: true, ownerUserId: true, createdAt: true, followUpAt: true, expiryAt: true } }),
         c.assignedUserId ? tx.user.findFirst({ where: { id: c.assignedUserId }, select: { id: true, name: true } }) : null,
+        this.answeredAmong(tx, agencyId, [id]),
+        tx.agency.findUniqueOrThrow({ where: { id: agencyId }, select: { salesVisibility: true } }),
+        tx.whatsappAccount.findFirst({ where: { agencyId } }),
       ]);
-      const authors = await tx.user.findMany({ where: { id: { in: notes.map((n) => n.authorId) } }, select: { id: true, name: true } });
+      const versionIds = quotes.map((q) => q.currentVersionId).filter(Boolean) as string[];
+      const [authors, versions, history] = await Promise.all([
+        tx.user.findMany({ where: { id: { in: notes.map((n) => n.authorId) } }, select: { id: true, name: true } }),
+        versionIds.length ? tx.quoteVersion.findMany({ where: { agencyId, id: { in: versionIds } }, select: { id: true, versionNumber: true, total: true, trip: true } }) : [],
+        this.customerHistory(tx, p, agencyId, c.customerId, id, restricted),
+      ]);
       const win = windowState(c.lastInboundAt);
-      const account = await tx.whatsappAccount.findFirst({ where: { agencyId } });
       const block = textSendBlock(c, account);
+      const now = new Date();
       return {
-        id: c.id, status: c.status, unreadCount: c.unreadCount, summary: c.summary, summaryAt: c.summaryAt, windowOpen: win.open,
+        id: c.id, status: c.status, workflow: workflowOf(c.status, answered.has(id)), unreadCount: c.unreadCount, windowOpen: win.open,
         windowExpiresAt: win.expiresAt,
         /** Why a free-form text cannot be sent now (null = it can). The server enforces the same rule on every send. */
         sendBlock: block, chargesNotice: MESSAGING_CHARGES_NOTICE,
-        customer: { id: customer.id, name: customer.name, phone: customer.phoneE164, email: customer.email, notes: customer.notes }, assignedUser: assignee,
-        notes: notes.map((n) => ({ id: n.id, text: n.text, createdAt: n.createdAt, author: authors.find((a) => a.id === n.authorId)?.name ?? 'Unknown' })), quotes,
+        /** `all`: every employee sees every chat, so assignment is not part of the normal workflow. `assigned`: Sales see only chats assigned to them. */
+        salesVisibility: agency.salesVisibility,
+        customer: { id: customer.id, name: customer.name, phone: customer.phoneE164, email: customer.email, notes: customer.notes, since: customer.createdAt }, customerHistory: history, assignedUser: assignee,
+        notes: notes.map((n) => ({ id: n.id, text: n.text, createdAt: n.createdAt, author: authors.find((a) => a.id === n.authorId)?.name ?? 'Unknown' })),
+        quotes: quotes.map((q) => {
+          const v = versions.find((x) => x.id === q.currentVersionId);
+          const trip = (v?.trip ?? {}) as { tripType?: string; destinations?: string[] };
+          const open = ['sent', 'negotiating'].includes(q.status);
+          const expired = open && !!q.expiryAt && q.expiryAt < now;
+          return {
+            id: q.id, quoteNumber: q.quoteNumber, status: expired ? 'expired' : q.status, currentVersionId: q.currentVersionId, ownerUserId: q.ownerUserId,
+            versionNumber: v?.versionNumber ?? null, total: v ? v.total.toString() : null, createdAt: q.createdAt,
+            tripType: trip.tripType ?? null, destination: trip.destinations?.length ? trip.destinations.join(', ') : null,
+            followUpAt: q.followUpAt,
+            // The same rule as the dashboard's "follow-ups due": an open, unexpired quote whose follow-up date has passed.
+            followUpOverdue: open && !expired && !!q.followUpAt && q.followUpAt <= now,
+          };
+        }),
       };
     });
+  }
+
+  /** Counts for the customer summary, limited to what this person may see (Sales in assigned-only mode see their own chats and quotes). */
+  private async customerHistory(tx: Tx, p: Principal, agencyId: string, customerId: string, currentConversationId: string, restricted: boolean) {
+    const convs = await tx.conversation.findMany({ where: { agencyId, customerId, ...(restricted ? { assignedUserId: p.userId } : {}) }, select: { id: true } });
+    const quoteWhere = { agencyId, deletedAt: null, customerId, ...(restricted ? { OR: [{ ownerUserId: p.userId }, { conversationId: { in: convs.map((x) => x.id) } }] } : {}) };
+    const [quotes, accepted] = await Promise.all([tx.quote.count({ where: quoteWhere }), tx.quote.count({ where: { ...quoteWhere, status: 'accepted' } })]);
+    return { otherConversations: convs.filter((x) => x.id !== currentConversationId).length, quotes, acceptedQuotes: accepted };
   }
 
   async messages(p: Principal, agencyId: string, id: string, q: { before?: string; limit: number }) {
@@ -137,7 +197,7 @@ export class InboxController {
 
   @Get()
   list(@CurrentUser() p: Principal, @Query() q: Record<string, string>) {
-    return this.svc.list(p, agencyOf(p), parse(z.object({ search: z.string().max(100).optional(), filter: z.enum(['all', 'unread', 'mine', 'unassigned', 'open', 'closed', 'quoted']).optional(), page: z.coerce.number().int().min(1).default(1), pageSize: z.coerce.number().int().min(1).max(100).default(30) }), q));
+    return this.svc.list(p, agencyOf(p), parse(z.object({ search: z.string().max(100).optional(), filter: z.enum(['all', 'unread', 'mine', 'unassigned', 'open', 'closed', 'quoted', 'new', 'active', 'waiting', 'resolved']).optional(), focus: z.string().uuid().optional(), page: z.coerce.number().int().min(1).default(1), pageSize: z.coerce.number().int().min(1).max(100).default(30) }), q));
   }
 
   @Get(':id') detail(@CurrentUser() p: Principal, @Param('id', ParseUUIDPipe) id: string) { return this.svc.detail(p, agencyOf(p), id); }
@@ -184,6 +244,20 @@ export class InboxController {
       const d = durationOf(c.version?.trip);
       if (d) auto.duration = d;
       return { auto, windowOpen: windowState(conv.lastInboundAt).open, sendBlock: textSendBlock(conv, account) };
+    });
+  }
+
+  /** The one manual workflow action. Everything else (new, active, waiting) follows from messages. */
+  @Post(':id/resolve')
+  async resolve(@CurrentUser() p: Principal, @Param('id', ParseUUIDPipe) id: string) {
+    const agencyId = agencyOf(p);
+    return this.db.tenant(agencyId, async (tx) => {
+      const c = await this.svc.getConversation(tx, p, agencyId, id);
+      if (c.status !== STATUS_AFTER_RESOLVE) {
+        await tx.conversation.update({ where: { id }, data: { status: STATUS_AFTER_RESOLVE } });
+        await audit(tx, { agencyId, actorUserId: p.userId, action: 'conversation.resolved', entityType: 'conversation', entityId: id, metadata: { from: c.status } });
+      }
+      return { id, status: STATUS_AFTER_RESOLVE, workflow: 'resolved' as const };
     });
   }
 

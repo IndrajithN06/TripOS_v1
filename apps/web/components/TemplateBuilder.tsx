@@ -41,7 +41,7 @@ export function TemplateManager() {
         </span>
       </div>
       {!data ? <Loading /> : data.length === 0 ? <Empty>No templates yet. {isAdmin ? 'Create your first quotation template.' : 'Ask an admin to create one.'}</Empty> : (
-        <div className="card table-wrap">
+        <div className="card table-wrap sticky-head">
           <table><thead><tr><th>Template</th><th>Purpose</th><th>Where it lives</th><th>Meta status</th><th /></tr></thead><tbody>{data.map((t) => {
             const o = ORIGIN[t.origin] ?? ORIGIN.local_draft;
             return (

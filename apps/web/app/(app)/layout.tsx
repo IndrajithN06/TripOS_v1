@@ -4,6 +4,7 @@ import { usePathname, useRouter } from 'next/navigation';
 import { useEffect } from 'react';
 import { api, useApi } from '@/lib/api';
 import { Loading, Me, MeContext, RefreshMeContext, ErrorBox } from '@/components/ui';
+import { StickyTables } from '@/components/StickyTables';
 
 const NAV = [
   { href: '/dashboard', label: 'Dashboard', icon: '▦', roles: ['AGENCY_ADMIN', 'SALES'] },
@@ -47,13 +48,14 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
           <a href="#" onClick={(e) => { e.preventDefault(); void api('/auth/logout', { method: 'POST' }).then(() => (location.href = '/login')); }}>Sign out</a>
         </nav>
         <main className="main">
-          {me.agency?.whatsapp && ['degraded', 'disconnected'].includes(me.agency.whatsapp.status) && (
+          {path.startsWith('/inbox') && me.agency?.whatsapp && ['degraded', 'disconnected'].includes(me.agency.whatsapp.status) && (
             <div className="banner err slim" role="alert">
               <strong>WhatsApp is {me.agency.whatsapp.status === 'degraded' ? 'having problems' : 'disconnected'}.</strong> Messages may not send or arrive. {me.agency.whatsapp.reason}{' '}
               {me.user.role === 'AGENCY_ADMIN' ? <Link href="/settings">Open Settings → WhatsApp</Link> : 'Please tell your agency admin.'}
             </div>
           )}
           {children}
+          <StickyTables />
         </main>
       </div>
       </RefreshMeContext.Provider>

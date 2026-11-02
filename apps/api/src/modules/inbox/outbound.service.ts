@@ -7,6 +7,7 @@ import { WaAccount, WaSendError, WHATSAPP, WhatsAppProvider } from '../../provid
 import { isRetryableFailure } from '../quotes/retry-policy';
 import { compile, TemplateSpec } from '../templates/template-spec';
 import { WhatsappAccountService } from '../whatsapp/whatsapp-account.service';
+import { isEmployeeReply, STATUS_AFTER_AGENCY_REPLY } from './conversation-workflow';
 import { notConnectedMessage, SERVICE_WINDOW_MS, textSendBlock, windowState } from './service-window';
 
 export { SERVICE_WINDOW_MS, windowState };
@@ -25,7 +26,7 @@ export interface TemplateExtra {
 }
 
 interface Prepared {
-  msg: { id: string };
+  msg: { id: string; createdAt: Date };
   customer: { phoneE164: string };
   account: { phoneNumberId: string; credentialSecretRef: string | null };
   asset: { storageKey: string; mimeType: string } | null;
@@ -125,6 +126,15 @@ export class OutboundService {
       await this.db.tenant(agencyId, async (tx) => {
         await tx.message.update({ where: { id: msg.id }, data: { status: 'submitted', providerMessageId: r.providerMessageId } });
         await tx.conversation.update({ where: { id: conversationId }, data: { lastMessageAt: new Date() } });
+        // The agency has answered and now waits for the customer. Only a person's own accepted reply does this: a failed send never reaches
+        // this line, and a background retry (no user) does not count. If the customer wrote after this message was created (while the provider
+        // call was in flight), their message is the newer event and the chat stays open.
+        if (isEmployeeReply(opts.userId)) {
+          await tx.conversation.updateMany({
+            where: { id: conversationId, agencyId, OR: [{ lastInboundAt: null }, { lastInboundAt: { lte: msg.createdAt } }] },
+            data: { status: STATUS_AFTER_AGENCY_REPLY },
+          });
+        }
       });
       return { ok: true, messageId: msg.id, status: 'submitted' };
     } catch (e) {
