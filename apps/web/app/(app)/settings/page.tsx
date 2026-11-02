@@ -12,8 +12,10 @@ export default function Settings() {
   const [tab, setTab] = useState('branding');
   return (
     <>
-      <div className="page-head"><h1>Settings</h1></div>
-      <div className="tabs" role="tablist">{TABS.map(([k, l]) => <button key={k} role="tab" aria-selected={tab === k} className={`tab ${tab === k ? 'on' : ''}`} onClick={() => setTab(k)}>{l}</button>)}</div>
+      <div className="page-head with-tabs">
+        <h1>Settings</h1>
+        <div className="tabs" role="tablist">{TABS.map(([k, l]) => <button key={k} role="tab" aria-selected={tab === k} className={`tab ${tab === k ? 'on' : ''}`} onClick={() => setTab(k)}>{l}</button>)}</div>
+      </div>
       {tab === 'branding' && <Branding />}
       {tab === 'team' && <Team />}
       {tab === 'whatsapp' && <WhatsApp />}

@@ -20,8 +20,17 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .nav a { color: var(--nav-ink); padding: 9px 10px; border-radius: 8px; display: flex; gap: 10px; align-items: center; }
 .nav a:hover { background: rgba(255,255,255,.07); } .nav a.active { background: rgba(255,255,255,.14); color: #fff; font-weight: 600; }
 .nav .spacer { flex: 1; } .nav .who { font-size: 12px; padding: 8px 10px; color: #8fa0b5; }
-.main { padding: 22px 26px; min-width: 0; }
-.page-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 16px; flex-wrap: wrap; }
+/* --main-px is the page's side padding; the sticky module header reaches into it so its background covers the gutters */
+.main { --main-px: 26px; padding: 22px var(--main-px); min-width: 0; }
+/* Module header (title, description, actions): stays at the top while the page scrolls underneath. It is one shared class, so every module
+   behaves the same. The negative margin-top and padding-top cancel out, so nothing moves at rest; when stuck, the title keeps 8px of air. */
+.page-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap;
+  position: sticky; top: 0; z-index: 20; background: var(--bg);
+  margin: -8px calc(var(--main-px) * -1) 4px; padding: 8px var(--main-px) 12px; }
+/* A module header that has a tab row (Settings): the tabs join the sticky block, so title and tabs stay together. The 16px gap between them
+   and the 16px below the tabs are the same as before, so nothing moves at rest. */
+.page-head.with-tabs { flex-direction: column; align-items: stretch; flex-wrap: nowrap; gap: 16px; padding-bottom: 0; margin-bottom: 16px; }
+.page-head.with-tabs .tabs { margin-bottom: 0; }
 
 .card { background: var(--white); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px; box-shadow: var(--shadow); }
 .grid { display: grid; gap: 14px; } .grid.cols-4 { grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); } .grid.cols-2 { grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); }
@@ -74,7 +83,9 @@ td { padding: 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
 @media (max-width: 1100px) { .qb { grid-template-columns: 1fr; } .qb .side { position: static; } }
 @media (max-width: 760px) {
   .shell { grid-template-columns: 1fr; } .nav { position: static; height: auto; flex-direction: row; flex-wrap: wrap; padding: 8px; } .nav .brand, .nav .who, .nav .spacer { display: none; }
-  .main { padding: 14px 16px; }
+  .main { --main-px: 16px; padding: 14px var(--main-px); }
+  /* keep the sticky header compact: one scrollable row of tabs instead of several wrapped rows */
+  .page-head.with-tabs .tabs { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; } .page-head.with-tabs .tabs::-webkit-scrollbar { display: none; } .page-head.with-tabs .tab { flex: none; white-space: nowrap; }
 }
 
 /* ---- premium quotation document (preview, public link) ---- */
